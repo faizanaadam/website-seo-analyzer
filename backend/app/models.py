@@ -63,9 +63,36 @@ class RawFetchData(BaseModel):
     error_message: Optional[str] = None
 
 
+class TechnicalFindingModel(BaseModel):
+    id: str
+    title: str
+    status: str  # 'pass' | 'needs_attention' | 'fail'
+    summary: str
+    why_it_matters: str
+    evidence_found: str
+    suggested_action: str
+    affected_urls: List[str] = Field(default_factory=list)
+
+
+class TechnicalSEOSummaryModel(BaseModel):
+    passed_count: int
+    needs_attention_count: int
+    issues_count: int
+    total_checks: int
+    health_score: int
+    summary_text: str
+
+
+class TechnicalSEOResultModel(BaseModel):
+    summary: TechnicalSEOSummaryModel
+    findings: List[TechnicalFindingModel] = Field(default_factory=list)
+    inferred_category: str = "general"
+
+
 class AnalysisResponse(BaseModel):
     status: str
     message: str
     target_url: str
     fetch_data: Optional[RawFetchData] = None
+    technical_seo: Optional[TechnicalSEOResultModel] = None
     error: Optional[str] = None
