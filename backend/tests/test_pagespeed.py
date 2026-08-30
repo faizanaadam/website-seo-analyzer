@@ -211,3 +211,63 @@ def test_analyse_endpoint_with_pagespeed_and_content():
         assert data["pagespeed"]["performance_score"] == 78
         assert data["pagespeed"]["metrics"]["fcp"] == "1.2 s"
         assert data["pagespeed"]["metrics"]["cls"] == 0.05
+
+
+@pytest.mark.anyio
+async def test_pagespeed_timeout_then_retry_success():
+    """Verify that transient timeout on attempt 1 retries and succeeds on attempt 2."""
+    mock_success_resp = MagicMock()
+    mock_success_resp.status_code = 200
+    mock_success_resp.json.return_value = MOCK_SUCCESSFUL_PAGESPEED_JSON
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.get = AsyncMock(side_effect=[
+        httpx.TimeoutException("Transient PageSpeed timeout"),
+        mock_success_resp,
+    ])
+
+    result = await get_pagespeed_insights("https://example.com", client=mock_client, api_key="valid-key")
+
+    assert result.status == "available"
+    assert result.performance_score == 85
+    assert mock_client.get.call_count == 2
+
+
+@pytest.mark.anyio
+async def test_pagespeed_rate_limit_then_retry_success():
+    """Verify that transient HTTP 429 rate limit on attempt 1 retries and succeeds on attempt 2."""
+    mock_429_resp = MagicMock()
+    mock_429_resp.status_code = 429
+
+    mock_success_resp = MagicMock()
+    mock_success_resp.status_code = 200
+    mock_success_resp.json.return_value = MOCK_SUCCESSFUL_PAGESPEED_JSON
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.get = AsyncMock(side_effect=[
+        mock_429_resp,
+        mock_success_resp,
+    ])
+
+    result = await get_pagespeed_insights("https://example.com", client=mock_client, api_key="valid-key")
+
+    assert result.status == "available"
+    assert result.performance_score == 85
+    assert mock_client.get.call_count == 2
+
+
+@pytest.mark.anyio
+async def test_pagespeed_auth_failure_no_retry():
+    """Verify that non-transient HTTP 403 error fails fast with no retry."""
+    mock_403_resp = MagicMock()
+    mock_403_resp.status_code = 403
+    mock_403_resp.json.return_value = {"error": {"message": "Invalid API key."}}
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.get = AsyncMock(return_value=mock_403_resp)
+
+    result = await get_pagespeed_insights("https://example.com", client=mock_client, api_key="invalid-key")
+
+    assert result.status == "unavailable"
+    assert mock_client.get.call_count == 1
+

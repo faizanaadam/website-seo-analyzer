@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -535,100 +536,127 @@ async def generate_ai_insights(
         "Content-Type": "application/json",
     }
 
+    timeout_sec = settings.OPENAI_TIMEOUT_SECONDS
+    max_retries = max(1, settings.OPENAI_MAX_RETRIES)
+    timeout_obj = httpx.Timeout(connect=5.0, read=timeout_sec, write=5.0, pool=10.0)
+
     own_client = False
     if client is None:
-        client = httpx.AsyncClient(timeout=OPENAI_TIMEOUT)
+        client = httpx.AsyncClient(timeout=timeout_obj)
         own_client = True
 
     try:
-        response = await client.post(
-            OPENAI_CHAT_ENDPOINT,
-            headers=headers,
-            json=request_body,
-        )
-
-        if response.status_code == 200:
-            resp_json = response.json()
-            choices = resp_json.get("choices", [])
-            if not choices:
-                return AIAnalysisResultModel(
-                    status="unavailable",
-                    reason="OpenAI returned an empty choice response.",
-                )
-
-            raw_content = choices[0].get("message", {}).get("content", "")
-            if not raw_content:
-                return AIAnalysisResultModel(
-                    status="unavailable",
-                    reason="OpenAI returned empty message content.",
-                )
-
+        for attempt in range(1, max_retries + 1):
             try:
-                parsed_data = json.loads(raw_content)
-                # Ensure status is set
-                if "status" not in parsed_data:
-                    parsed_data["status"] = "available"
-
-                # Validate with Pydantic
-                validated_model = AIAnalysisResultModel(**parsed_data)
-
-                # Execute deterministic post-validation grounding layer
-                grounded_model = post_validate_ai_insights(validated_model, registry)
-                return grounded_model
-
-            except json.JSONDecodeError as json_err:
-                logger.warning(f"Malformed JSON from OpenAI: {json_err}")
-                return AIAnalysisResultModel(
-                    status="unavailable",
-                    reason="AI insights response was not valid JSON.",
-                )
-            except Exception as val_err:
-                logger.warning(f"Pydantic validation error for AI response: {val_err}")
-                return AIAnalysisResultModel(
-                    status="unavailable",
-                    reason=f"Failed to validate AI response structure: {str(val_err)}",
+                response = await client.post(
+                    OPENAI_CHAT_ENDPOINT,
+                    headers=headers,
+                    json=request_body,
                 )
 
-        elif response.status_code in (401, 403):
-            err_msg = "OpenAI API key is invalid or lacks required permissions."
-            try:
-                err_body = response.json().get("error", {})
-                if err_body.get("message"):
-                    err_msg = err_body["message"]
-            except Exception:
-                pass
-            return AIAnalysisResultModel(
-                status="unavailable",
-                reason=err_msg,
-            )
+                if response.status_code == 200:
+                    if attempt > 1:
+                        logger.info(f"OpenAI request succeeded on attempt {attempt}")
 
-        elif response.status_code == 429:
-            return AIAnalysisResultModel(
-                status="unavailable",
-                reason="OpenAI API rate limit or quota exceeded.",
-            )
+                    resp_json = response.json()
+                    choices = resp_json.get("choices", [])
+                    if not choices:
+                        return AIAnalysisResultModel(
+                            status="unavailable",
+                            reason="OpenAI returned an empty choice response.",
+                        )
 
-        else:
-            return AIAnalysisResultModel(
-                status="unavailable",
-                reason=f"OpenAI API returned unexpected status code HTTP {response.status_code}.",
-            )
+                    raw_content = choices[0].get("message", {}).get("content", "")
+                    if not raw_content:
+                        return AIAnalysisResultModel(
+                            status="unavailable",
+                            reason="OpenAI returned empty message content.",
+                        )
 
-    except httpx.TimeoutException:
+                    try:
+                        parsed_data = json.loads(raw_content)
+                        if "status" not in parsed_data:
+                            parsed_data["status"] = "available"
+
+                        # Validate with Pydantic
+                        validated_model = AIAnalysisResultModel(**parsed_data)
+
+                        # Execute deterministic post-validation grounding layer
+                        grounded_model = post_validate_ai_insights(validated_model, registry)
+                        return grounded_model
+
+                    except json.JSONDecodeError as json_err:
+                        logger.warning(f"Malformed JSON from OpenAI: {json_err}")
+                        return AIAnalysisResultModel(
+                            status="unavailable",
+                            reason="AI insights response was not valid JSON.",
+                        )
+                    except Exception as val_err:
+                        logger.warning(f"Pydantic validation error for AI response: {val_err}")
+                        return AIAnalysisResultModel(
+                            status="unavailable",
+                            reason=f"Failed to validate AI response structure: {str(val_err)}",
+                        )
+
+                # Non-transient errors: fail fast, DO NOT retry
+                elif response.status_code in (401, 403):
+                    logger.warning("OpenAI API authentication failed (HTTP 401/403). Not retrying.")
+                    return AIAnalysisResultModel(
+                        status="unavailable",
+                        reason="OpenAI API key is invalid or lacks required permissions.",
+                    )
+                elif response.status_code == 400:
+                    logger.warning("OpenAI API bad request (HTTP 400). Not retrying.")
+                    return AIAnalysisResultModel(
+                        status="unavailable",
+                        reason="OpenAI API returned bad request error.",
+                    )
+
+                # Transient errors (HTTP 429, 500, 502, 503, 504)
+                elif response.status_code in (429, 500, 502, 503, 504):
+                    is_rate_limit = response.status_code == 429
+                    fail_type = "rate limit (HTTP 429)" if is_rate_limit else f"server error (HTTP {response.status_code})"
+
+                    if attempt < max_retries:
+                        logger.info(f"OpenAI request attempt {attempt} failed ({fail_type}). Retrying...")
+                        await asyncio.sleep(0.5 * attempt)
+                        continue
+                    else:
+                        logger.warning(f"OpenAI request failed after {max_retries} attempts ({fail_type}).")
+                        return AIAnalysisResultModel(
+                            status="unavailable",
+                            reason="OpenAI API rate limit or quota exceeded." if is_rate_limit else "OpenAI API is temporarily unavailable.",
+                        )
+
+                else:
+                    return AIAnalysisResultModel(
+                        status="unavailable",
+                        reason=f"OpenAI API returned unexpected status code HTTP {response.status_code}.",
+                    )
+
+            except (httpx.TimeoutException, httpx.NetworkError) as transient_exc:
+                err_kind = "timed out" if isinstance(transient_exc, httpx.TimeoutException) else "network error"
+                if attempt < max_retries:
+                    logger.info(f"OpenAI request attempt {attempt} {err_kind}. Retrying...")
+                    await asyncio.sleep(0.5 * attempt)
+                    continue
+                else:
+                    logger.warning(f"OpenAI request {err_kind} after {max_retries} attempts.")
+                    return AIAnalysisResultModel(
+                        status="unavailable",
+                        reason=f"OpenAI API request {err_kind} after retry.",
+                    )
+
         return AIAnalysisResultModel(
             status="unavailable",
-            reason="OpenAI API request timed out.",
+            reason="AI insights could not be generated at this time.",
         )
-    except httpx.ConnectError:
-        return AIAnalysisResultModel(
-            status="unavailable",
-            reason="Could not connect to OpenAI API server.",
-        )
+
     except Exception as exc:
         logger.warning(f"Unexpected error in AI insights generation: {exc}")
         return AIAnalysisResultModel(
             status="unavailable",
-            reason=f"An unexpected error occurred during AI analysis: {str(exc)}",
+            reason="AI insights could not be generated at this time.",
         )
     finally:
         if own_client:

@@ -107,11 +107,12 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
         if isinstance(pagespeed_res, PageSpeedResultModel):
             final_pagespeed = pagespeed_res
         elif isinstance(pagespeed_res, Exception):
+            logger.warning(f"PageSpeed task raised an exception: {pagespeed_res}")
             final_pagespeed = PageSpeedResultModel(
                 status="unavailable",
                 performance_score=None,
                 metrics=None,
-                reason=f"PageSpeed analysis error: {str(pagespeed_res)}",
+                reason="Google PageSpeed API is temporarily unavailable.",
             )
 
         raw_fetch = RawFetchData(**result.to_dict())
@@ -124,15 +125,22 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
             content_analysis=final_content,
         )
 
-        # 4. Generate AI insights from deterministic facts
-        ai_insights = await generate_ai_insights(
-            technical_seo=tech_model,
-            content_analysis=final_content,
-            pagespeed=final_pagespeed,
-            fetch_data=raw_fetch,
-            context_intelligence=context_intel,
-            client=client,
-        )
+        # 4. Generate AI insights from deterministic facts (fault isolated)
+        try:
+            ai_insights = await generate_ai_insights(
+                technical_seo=tech_model,
+                content_analysis=final_content,
+                pagespeed=final_pagespeed,
+                fetch_data=raw_fetch,
+                context_intelligence=context_intel,
+                client=client,
+            )
+        except Exception as ai_err:
+            logger.warning(f"Unexpected error in AI insights pipeline: {ai_err}")
+            ai_insights = AIAnalysisResultModel(
+                status="unavailable",
+                reason="Strategic AI analysis could not be generated at this time.",
+            )
 
     return AnalysisResponse(
         status="success",

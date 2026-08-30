@@ -208,10 +208,13 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
             </View>
           ) : (
             <View style={styles.aiUnavailableCard}>
-              <Text style={styles.aiUnavailableTitle}>AI Insights Unavailable</Text>
+              <Text style={styles.aiUnavailableTitle}>Strategic AI Analysis Unavailable</Text>
               <Text style={styles.aiUnavailableReason}>
-                {ai?.reason || 'OpenAI analysis is currently unavailable. Deterministic SEO, Content, and PageSpeed metrics remain fully active.'}
+                Strategic AI analysis is temporarily unavailable. Your deterministic SEO and content analysis results are still complete.
               </Text>
+              {ai?.reason ? (
+                <Text style={styles.aiUnavailableSubReason}>Notice: {ai.reason}</Text>
+              ) : null}
             </View>
           )}
         </View>
@@ -291,10 +294,13 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
               </>
             ) : (
               <View style={styles.psiUnavailableBox}>
-                <Text style={styles.psiUnavailableTitle}>PageSpeed Data Unavailable</Text>
+                <Text style={styles.psiUnavailableTitle}>Performance Data Unavailable</Text>
                 <Text style={styles.psiUnavailableReason}>
-                  {pagespeed?.reason || 'Google PageSpeed Insights could not be retrieved for this domain.'}
+                  Performance data could not be retrieved at this time. The rest of the website analysis completed successfully.
                 </Text>
+                {pagespeed?.reason ? (
+                  <Text style={styles.psiUnavailableSubReason}>Notice: {pagespeed.reason}</Text>
+                ) : null}
               </View>
             )}
           </View>
@@ -893,6 +899,12 @@ const styles = StyleSheet.create({
     color: THEME.colors.textMuted,
     lineHeight: 16,
   },
+  aiUnavailableSubReason: {
+    fontSize: 11,
+    color: THEME.colors.textMuted,
+    marginTop: 6,
+    fontStyle: 'italic',
+  },
   psiCard: {
     backgroundColor: THEME.colors.surface,
     borderRadius: THEME.borderRadius.md,
@@ -989,6 +1001,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: THEME.colors.textMuted,
     lineHeight: 16,
+  },
+  psiUnavailableSubReason: {
+    fontSize: 11,
+    color: THEME.colors.textMuted,
+    marginTop: 6,
+    fontStyle: 'italic',
   },
   reliabilityWarningCard: {
     backgroundColor: 'rgba(245, 158, 11, 0.12)',

@@ -599,9 +599,9 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                 title="Canonical Tag",
                 status="needs_attention",
                 summary="Canonical tag (<link rel='canonical'>) is missing.",
-                why_it_matters="Canonical tags prevent duplicate content penalties caused by www vs non-www or trailing slash URL variations.",
+                why_it_matters="Canonical tags help search engines understand which version of similar or duplicate pages should be treated as the preferred authoritative URL.",
                 evidence_found="No <link rel='canonical'> detected in <head>.",
-                suggested_action=f"Add <link rel='canonical' href='{final_url}'> to prevent duplicate content ambiguity.",
+                suggested_action=f"Add <link rel='canonical' href='{final_url}'> to designate the preferred authoritative URL.",
             )
         )
     else:
@@ -692,7 +692,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                     title="Structured Data (Schema.org)",
                     status="pass",
                     summary=f"Specialized healthcare structured data ({', '.join(sorted(healthcare_matching))}) is present.",
-                    why_it_matters="Healthcare schema enables Google rich results, map pins, and verified clinical entity status.",
+                    why_it_matters="Healthcare schema helps search engines understand clinical entities and qualify pages for rich snippet eligibility and local knowledge panels.",
                     evidence_found=f"Detected schema types: {parsed.structured_data_types}",
                     suggested_action="Ensure address, telephone, openingHours, and priceRange properties are complete in the JSON-LD.",
                 )
@@ -704,7 +704,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                     title="Structured Data (Schema.org)",
                     status="pass",
                     summary="LocalBusiness schema is present. (Consider refining to MedicalBusiness/Dentist for maximum relevance).",
-                    why_it_matters="Enables Google Local pack and map visibility.",
+                    why_it_matters="Helps search engines recognize your physical establishment and local healthcare services.",
                     evidence_found=f"Detected schema types: {parsed.structured_data_types}",
                     suggested_action="Specialize LocalBusiness to MedicalBusiness or Dentist for richer healthcare entity recognition.",
                 )
@@ -716,7 +716,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                     title="Structured Data (Schema.org)",
                     status="needs_attention",
                     summary="Generic Organization schema found, but missing specialized MedicalBusiness or LocalBusiness markup.",
-                    why_it_matters="A local clinic gains significantly higher local map visibility with MedicalBusiness schema than generic Organization.",
+                    why_it_matters="Specialized medical schema provides search engines with more precise clinical entity details than generic Organization markup.",
                     evidence_found=f"Detected schema types: {parsed.structured_data_types}",
                     suggested_action="Add MedicalBusiness / Dentist schema with clinic address, phone, and opening hours.",
                 )
@@ -728,7 +728,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                     title="Structured Data (Schema.org)",
                     status="fail",
                     summary="No structured data (schema.org) found on this healthcare/clinic website.",
-                    why_it_matters="Missing structured data prevents Google from featuring your clinic in local map packs and rich snippets.",
+                    why_it_matters="Structured data helps search engines understand entity relationships, business hours, and clinical qualifications.",
                     evidence_found="0 schema.org JSON-LD scripts detected.",
                     suggested_action="Add MedicalBusiness or Dentist JSON-LD markup to your homepage.",
                 )
@@ -744,7 +744,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                     title="Structured Data (Schema.org)",
                     status="pass",
                     summary=f"Relevant local service schema ({', '.join(sorted(local_matching))}) is present.",
-                    why_it_matters="LocalBusiness schema powers Google Maps integration and local search packs.",
+                    why_it_matters="LocalBusiness schema helps search engines understand business hours, geographic location, and local relevance.",
                     evidence_found=f"Detected schema types: {parsed.structured_data_types}",
                     suggested_action="Verify that geo coordinates, address, and telephone are accurate in schema.",
                 )
@@ -756,7 +756,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                     title="Structured Data (Schema.org)",
                     status="needs_attention",
                     summary="Generic Organization schema found, but missing local business markup.",
-                    why_it_matters="Local service businesses need LocalBusiness schema to compete for nearby customer searches.",
+                    why_it_matters="Local service businesses benefit from LocalBusiness schema to provide search engines with direct address and service details.",
                     evidence_found=f"Detected schema types: {parsed.structured_data_types}",
                     suggested_action="Add LocalBusiness structured data with service area and contact details.",
                 )
@@ -768,7 +768,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                     title="Structured Data (Schema.org)",
                     status="fail",
                     summary="No structured data (schema.org) found on this local service business site.",
-                    why_it_matters="Competitors with LocalBusiness schema gain prominent placement in local search and map results.",
+                    why_it_matters="LocalBusiness schema helps search engines verify your business location and opening hours.",
                     evidence_found="0 schema.org JSON-LD scripts detected.",
                     suggested_action="Add LocalBusiness JSON-LD markup to your homepage.",
                 )

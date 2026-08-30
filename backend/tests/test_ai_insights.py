@@ -585,3 +585,92 @@ async def test_grounding_fallback_when_all_priorities_hallucinated():
     assert len(result.top_priorities) >= 1
     assert result.top_priorities[0].anchor_finding_id in ("image_alt_tags", "pagespeed_performance", "dedicated_service_pages_missing")
 
+
+@pytest.mark.anyio
+async def test_ai_insights_timeout_then_retry_success():
+    """Verify that a transient timeout on attempt 1 retries and succeeds on attempt 2."""
+    tech_seo, content, pagespeed, fetch_data = build_mock_analysis_data()
+
+    mock_success_resp = MagicMock()
+    mock_success_resp.status_code = 200
+    mock_success_resp.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(MOCK_OPENAI_VALID_JSON)}}]
+    }
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=[
+        httpx.TimeoutException("Transient timeout"),
+        mock_success_resp,
+    ])
+
+    result = await generate_ai_insights(
+        technical_seo=tech_seo,
+        content_analysis=content,
+        pagespeed=pagespeed,
+        fetch_data=fetch_data,
+        client=mock_client,
+        api_key="valid-key",
+    )
+
+    assert result.status == "available"
+    assert mock_client.post.call_count == 2
+
+
+@pytest.mark.anyio
+async def test_ai_insights_rate_limit_then_retry_success():
+    """Verify that a transient HTTP 429 rate limit on attempt 1 retries and succeeds on attempt 2."""
+    tech_seo, content, pagespeed, fetch_data = build_mock_analysis_data()
+
+    mock_429_resp = MagicMock()
+    mock_429_resp.status_code = 429
+
+    mock_success_resp = MagicMock()
+    mock_success_resp.status_code = 200
+    mock_success_resp.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(MOCK_OPENAI_VALID_JSON)}}]
+    }
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(side_effect=[
+        mock_429_resp,
+        mock_success_resp,
+    ])
+
+    result = await generate_ai_insights(
+        technical_seo=tech_seo,
+        content_analysis=content,
+        pagespeed=pagespeed,
+        fetch_data=fetch_data,
+        client=mock_client,
+        api_key="valid-key",
+    )
+
+    assert result.status == "available"
+    assert mock_client.post.call_count == 2
+
+
+@pytest.mark.anyio
+async def test_ai_insights_auth_failure_no_retry():
+    """Verify that non-transient HTTP 401 auth error fails fast with no retry."""
+    tech_seo, content, pagespeed, fetch_data = build_mock_analysis_data()
+
+    mock_401_resp = MagicMock()
+    mock_401_resp.status_code = 401
+    mock_401_resp.json.return_value = {"error": {"message": "Invalid API key."}}
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_401_resp)
+
+    result = await generate_ai_insights(
+        technical_seo=tech_seo,
+        content_analysis=content,
+        pagespeed=pagespeed,
+        fetch_data=fetch_data,
+        client=mock_client,
+        api_key="invalid-key",
+    )
+
+    assert result.status == "unavailable"
+    assert mock_client.post.call_count == 1
+
+
