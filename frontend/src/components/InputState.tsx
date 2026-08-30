@@ -15,7 +15,7 @@ interface InputStateProps {
 }
 
 export const InputState: React.FC<InputStateProps> = ({ onStartAnalysis }) => {
-  const [url, setUrl] = useState<string>('https://bright-smile-clinic.com');
+  const [url, setUrl] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleRun = () => {
@@ -83,17 +83,33 @@ export const InputState: React.FC<InputStateProps> = ({ onStartAnalysis }) => {
           <View style={styles.chipRow}>
             <TouchableOpacity
               style={styles.chip}
-              onPress={() => setUrl('https://bright-smile-clinic.com')}
+              onPress={() => {
+                setUrl('https://www.tajhotels.com');
+                if (errorMessage) setErrorMessage(null);
+              }}
               activeOpacity={0.7}
             >
-              <Text style={styles.chipText}>bright-smile-clinic.com</Text>
+              <Text style={styles.chipText}>tajhotels.com</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.chip}
-              onPress={() => setUrl('https://apex-auto-repair.com')}
+              onPress={() => {
+                setUrl('https://example.com');
+                if (errorMessage) setErrorMessage(null);
+              }}
               activeOpacity={0.7}
             >
-              <Text style={styles.chipText}>apex-auto-repair.com</Text>
+              <Text style={styles.chipText}>example.com</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.chip}
+              onPress={() => {
+                setUrl('https://bright-smile-clinic.com');
+                if (errorMessage) setErrorMessage(null);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.chipText}>bright-smile-clinic.com</Text>
             </TouchableOpacity>
           </View>
         </View>

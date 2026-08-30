@@ -105,8 +105,18 @@ async def fetch_website(raw_url: str, client: Optional[httpx.AsyncClient] = None
         final_url = str(response.url)
         content_type = response.headers.get("content-type", "")
 
-        # Check for bot block
-        if response.status_code in (403, 503) and ("cloudflare" in response.text.lower() or "bot" in response.text.lower()):
+        # Check for bot block / WAF challenges
+        is_bot_blocked = response.status_code in (403, 503) and (
+            "cloudflare" in response.text.lower()
+            or "bot" in response.text.lower()
+            or "access denied" in response.text.lower()
+            or "edgesuite" in response.text.lower()
+            or "akamai" in response.text.lower()
+            or "incapsula" in response.text.lower()
+            or "datadome" in response.text.lower()
+            or "security challenge" in response.text.lower()
+        )
+        if is_bot_blocked:
             parsed_data = parse_html(response.text, final_url)
             return FetchResult(
                 success=True,

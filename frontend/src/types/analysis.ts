@@ -69,6 +69,65 @@ export interface ProjectItem {
   why: string;
 }
 
+export interface TechnicalFindingItem {
+  id: string;
+  title: string;
+  status: CheckStatus;
+  summary: string;
+  why_it_matters: string;
+  evidence_found: string;
+  suggested_action: string;
+  affected_urls?: string[];
+}
+
+export interface TechnicalSEOResultData {
+  summary: {
+    passed_count: number;
+    needs_attention_count: number;
+    issues_count: number;
+    total_checks: number;
+    health_score: number;
+    summary_text: string;
+  };
+  findings: TechnicalFindingItem[];
+  inferred_category?: string;
+}
+
+export interface RawFetchDataPayload {
+  success: boolean;
+  initial_url: string;
+  final_url: string;
+  status_code?: number | null;
+  response_time_ms?: number | null;
+  content_type?: string | null;
+  redirect_chain?: string[];
+  robots_txt_present?: boolean;
+  sitemap_xml_present?: boolean;
+  parsed_data?: {
+    title?: string | null;
+    meta_description?: string | null;
+    h1_tags?: string[];
+    h2_tags?: string[];
+    h3_tags?: string[];
+    visible_word_count?: number;
+    internal_links?: string[];
+    detected_ctas?: Record<string, string[]>;
+  } | null;
+  error_type?: string | null;
+  error_message?: string | null;
+}
+
+export interface AnalysisApiResponse {
+  status: 'success' | 'error';
+  message: string;
+  target_url: string;
+  fetch_data?: RawFetchDataPayload | null;
+  technical_seo?: TechnicalSEOResultData | null;
+  content_analysis?: ContentAnalysisResultData | null;
+  pagespeed?: PageSpeedResultData | null;
+  error?: string | null;
+}
+
 export interface AnalysisReportData {
   targetUrl: string;
   businessName: string;
@@ -78,6 +137,7 @@ export interface AnalysisReportData {
     needsAttentionCount: number;
     issuesCount: number;
     summaryText: string;
+    healthScore?: number;
   };
   quickWins: QuickWinItem[];
   technicalChecks: TechnicalCheckItem[];
@@ -87,7 +147,9 @@ export interface AnalysisReportData {
     homepageWordCount: number;
     callToActionDetected: string[];
     notes: string;
+    contactInfo?: ContactInfoData | null;
   };
+  pagespeed?: PageSpeedResultData | null;
   icp: {
     summary: string;
     items: ICPFindingItem[];

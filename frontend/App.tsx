@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { StyleSheet, View, StatusBar } from 'react-native';
 import { THEME } from './src/constants/theme';
 import { AppState, AnalysisReportData } from './src/types/analysis';
-import { MOCK_ANALYSIS_DATA } from './src/data/mockAnalysis';
 import { InputState } from './src/components/InputState';
 import { LoadingState } from './src/components/LoadingState';
 import { ResultsState } from './src/components/ResultsState';
@@ -10,40 +9,41 @@ import { ErrorState } from './src/components/ErrorState';
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>('input');
-  const [currentUrl, setCurrentUrl] = useState<string>('https://bright-smile-clinic.com');
+  const [currentUrl, setCurrentUrl] = useState<string>('');
   const [simulateError, setSimulateError] = useState<boolean>(false);
-  const [reportData, setReportData] = useState<AnalysisReportData>(MOCK_ANALYSIS_DATA);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [reportData, setReportData] = useState<AnalysisReportData | null>(null);
 
   // Trigger analysis flow
   const handleStartAnalysis = (url: string, shouldError: boolean = false) => {
+    // 1. Immediately wipe previous report state to guarantee fresh data
+    setReportData(null);
+    setErrorMessage(null);
     setCurrentUrl(url);
-    const triggerError = shouldError || url.toLowerCase().includes('error');
-    setSimulateError(triggerError);
+    setSimulateError(shouldError);
 
-    // Update mock target URL to match user input for realistic preview
-    setReportData({
-      ...MOCK_ANALYSIS_DATA,
-      targetUrl: url.startsWith('http') ? url : `https://${url}`,
-      businessName: url.includes('apex') ? 'Apex Auto Repair' : MOCK_ANALYSIS_DATA.businessName,
-    });
-
+    // 2. Transition to loading state
     setAppState('loading');
   };
 
-  // Loading completed successfully
-  const handleLoadingComplete = () => {
+  // Loading completed successfully with dynamic API data
+  const handleLoadingComplete = (data: AnalysisReportData) => {
+    setReportData(data);
     setAppState('results');
   };
 
   // Loading encountered error
-  const handleLoadingError = () => {
+  const handleLoadingError = (errorMsg: string) => {
+    setErrorMessage(errorMsg);
     setAppState('error');
   };
 
-  // Reset back to input state
+  // Reset back to clean input state
   const handleReset = () => {
-    setAppState('input');
+    setReportData(null);
+    setErrorMessage(null);
     setSimulateError(false);
+    setAppState('input');
   };
 
   return (
@@ -61,11 +61,14 @@ export default function App() {
         />
       )}
 
-      {appState === 'results' && <ResultsState data={reportData} onReset={handleReset} />}
+      {appState === 'results' && reportData && (
+        <ResultsState data={reportData} onReset={handleReset} />
+      )}
 
       {appState === 'error' && (
         <ErrorState
           targetUrl={currentUrl}
+          errorMessage={errorMessage || undefined}
           onRetry={() => handleStartAnalysis(currentUrl, false)}
           onBack={handleReset}
         />

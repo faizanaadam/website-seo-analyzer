@@ -1,4 +1,4 @@
-import { HealthResponse, AnalysisRequest, AnalysisResponse } from '../types/analysis';
+import { HealthResponse, AnalysisRequest, AnalysisResponse, AnalysisApiResponse } from '../types/analysis';
 import { API_CONFIG } from '../config';
 
 export class ApiService {
@@ -39,30 +39,64 @@ export class ApiService {
   }
 
   /**
-   * Test initial /api/analyse placeholder endpoint
+   * Performs full website analysis calling backend POST /api/analyse
    */
-  static async testAnalyse(
+  static async analyseWebsite(
     targetUrl: string,
     baseUrl: string = API_CONFIG.DEFAULT_BASE_URL
-  ): Promise<AnalysisResponse> {
+  ): Promise<AnalysisApiResponse> {
     const cleanUrl = baseUrl.replace(/\/+$/, '');
     const endpoint = `${cleanUrl}/api/analyse`;
 
     const payload: AnalysisRequest = { url: targetUrl };
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    // Allow up to 45 seconds for multi-page crawling and Google PageSpeed Insights
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
-    if (!response.ok) {
-      throw new Error(`Analysis test returned HTTP ${response.status}`);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        let errorDetail = `Server returned HTTP ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData.detail) errorDetail = errData.detail;
+        } catch (e) {
+          // ignore
+        }
+        throw new Error(errorDetail);
+      }
+
+      const data: AnalysisApiResponse = await response.json();
+      return data;
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('Analysis timed out after 45 seconds. The target website may be very slow to respond.');
+      }
+      throw error;
     }
+  }
 
-    return response.json();
+  /**
+   * Test initial /api/analyse placeholder endpoint (backwards compatible)
+   */
+  static async testAnalyse(
+    targetUrl: string,
+    baseUrl: string = API_CONFIG.DEFAULT_BASE_URL
+  ): Promise<AnalysisResponse> {
+    return this.analyseWebsite(targetUrl, baseUrl);
   }
 }
+

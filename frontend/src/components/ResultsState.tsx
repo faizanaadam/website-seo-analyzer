@@ -19,6 +19,17 @@ interface ResultsStateProps {
 }
 
 export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => {
+  const pagespeed = data.pagespeed;
+  const hasPageSpeedMetrics = pagespeed?.status === 'available' && pagespeed.metrics;
+  const score = pagespeed?.performance_score;
+
+  const getScoreColorStyle = (val: number | null | undefined) => {
+    if (val === null || val === undefined) return styles.metricScoreNeutral;
+    if (val >= 90) return styles.metricScoreGood;
+    if (val >= 50) return styles.metricScoreAvg;
+    return styles.metricScorePoor;
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
@@ -86,7 +97,63 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           ))}
         </View>
 
-        {/* 4. Content & Website Structure */}
+        {/* 4. Google PageSpeed Insights Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>⚡ Google PageSpeed & Core Web Vitals</Text>
+            <Text style={styles.sectionSubtitle}>
+              Official mobile Lighthouse performance scores and user experience vitals.
+            </Text>
+          </View>
+
+          <View style={styles.psiCard}>
+            {hasPageSpeedMetrics ? (
+              <>
+                <View style={styles.psiHeaderRow}>
+                  <View>
+                    <Text style={styles.psiCategoryLabel}>MOBILE PERFORMANCE SCORE</Text>
+                    <Text style={styles.psiSublabel}>Simulated Moto G Power / Mobile 4G</Text>
+                  </View>
+                  <View style={[styles.psiScoreBadge, getScoreColorStyle(score)]}>
+                    <Text style={styles.psiScoreNumber}>{score ?? 'N/A'}</Text>
+                    <Text style={styles.psiScoreTotal}>/100</Text>
+                  </View>
+                </View>
+
+                <View style={styles.contentDivider} />
+
+                {/* Web Vitals Grid */}
+                <View style={styles.vitalsGrid}>
+                  <View style={styles.vitalBox}>
+                    <Text style={styles.vitalLabel}>First Contentful Paint (FCP)</Text>
+                    <Text style={styles.vitalValue}>{pagespeed?.metrics?.fcp || 'N/A'}</Text>
+                  </View>
+                  <View style={styles.vitalBox}>
+                    <Text style={styles.vitalLabel}>Largest Contentful Paint (LCP)</Text>
+                    <Text style={styles.vitalValue}>{pagespeed?.metrics?.lcp || 'N/A'}</Text>
+                  </View>
+                  <View style={styles.vitalBox}>
+                    <Text style={styles.vitalLabel}>Cumulative Layout Shift (CLS)</Text>
+                    <Text style={styles.vitalValue}>{pagespeed?.metrics?.cls !== undefined && pagespeed?.metrics?.cls !== null ? pagespeed.metrics.cls : 'N/A'}</Text>
+                  </View>
+                  <View style={styles.vitalBox}>
+                    <Text style={styles.vitalLabel}>Total Blocking Time (TBT)</Text>
+                    <Text style={styles.vitalValue}>{pagespeed?.metrics?.tbt || pagespeed?.metrics?.inp || 'N/A'}</Text>
+                  </View>
+                </View>
+              </>
+            ) : (
+              <View style={styles.psiUnavailableBox}>
+                <Text style={styles.psiUnavailableTitle}>PageSpeed Data Unavailable</Text>
+                <Text style={styles.psiUnavailableReason}>
+                  {pagespeed?.reason || 'Google PageSpeed Insights could not be retrieved for this domain.'}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* 5. Content & Website Structure */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>📄 Content & Website Structure</Text>
@@ -97,36 +164,54 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
 
           <View style={styles.contentCard}>
             <Text style={styles.cardSectionLabel}>SERVICES DETECTED ON SITE</Text>
-            <View style={styles.chipsRow}>
-              {data.content.servicesDetected.map((service, i) => (
-                <View key={i} style={styles.serviceChip}>
-                  <Text style={styles.serviceChipText}>✓ {service}</Text>
-                </View>
-              ))}
-            </View>
+            {data.content.servicesDetected.length > 0 ? (
+              <View style={styles.chipsRow}>
+                {data.content.servicesDetected.map((service, i) => (
+                  <View key={i} style={styles.serviceChip}>
+                    <Text style={styles.serviceChipText}>✓ {service}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.noServiceText}>No dedicated service tags detected on crawled pages.</Text>
+            )}
 
             <View style={styles.contentDivider} />
 
             <View style={styles.contentStatRow}>
               <Text style={styles.statLabel}>Dedicated Service Pages:</Text>
               <Text style={styles.statValue}>
-                {data.content.dedicatedServicePages ? '✓ Yes (Individual procedures)' : '✕ No'}
+                {data.content.dedicatedServicePages ? '✓ Yes (Individual service routes)' : '✕ No (Single-page presentation)'}
               </Text>
             </View>
 
             <View style={styles.contentStatRow}>
               <Text style={styles.statLabel}>Homepage Word Count:</Text>
-              <Text style={styles.statValue}>{data.content.homepageWordCount} words (Healthy)</Text>
+              <Text style={styles.statValue}>{data.content.homepageWordCount} words</Text>
             </View>
 
             <View style={styles.contentStatRow}>
               <Text style={styles.statLabel}>Call-to-Action Detected:</Text>
-              <Text style={styles.statValue}>Online booking & Phone link</Text>
+              <Text style={styles.statValue}>{data.content.callToActionDetected.join(', ')}</Text>
             </View>
+
+            {data.content.contactInfo?.address && (
+              <View style={styles.contentStatRow}>
+                <Text style={styles.statLabel}>Physical Address:</Text>
+                <Text style={styles.statValue} numberOfLines={2}>{data.content.contactInfo.address}</Text>
+              </View>
+            )}
+
+            {data.content.contactInfo?.opening_hours && data.content.contactInfo.opening_hours.length > 0 && (
+              <View style={styles.contentStatRow}>
+                <Text style={styles.statLabel}>Opening Hours:</Text>
+                <Text style={styles.statValue} numberOfLines={2}>{data.content.contactInfo.opening_hours.join('; ')}</Text>
+              </View>
+            )}
           </View>
         </View>
 
-        {/* 5. Ideal Customer Profile Section */}
+        {/* 6. Ideal Customer Profile Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>🎯 Who Your Website Appears to Target</Text>
@@ -166,12 +251,12 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           </View>
         </View>
 
-        {/* 6. Competitor Section */}
+        {/* 7. Competitor Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>📍 Local Competitor Comparison</Text>
             <Text style={styles.sectionSubtitle}>
-              Benchmarking against nearby clinics in the same category.
+              Benchmarking against nearby businesses in the same category.
             </Text>
           </View>
 
@@ -220,7 +305,7 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           </View>
         </View>
 
-        {/* 7. Bigger Projects Section */}
+        {/* 8. Bigger Projects Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>🚀 Longer-Term Improvements</Text>
@@ -380,6 +465,103 @@ const styles = StyleSheet.create({
     marginTop: 2,
     lineHeight: 16,
   },
+  psiCard: {
+    backgroundColor: THEME.colors.surface,
+    borderRadius: THEME.borderRadius.md,
+    padding: THEME.spacing.md,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+  },
+  psiHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  psiCategoryLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: THEME.colors.primaryLight,
+    letterSpacing: 0.8,
+  },
+  psiSublabel: {
+    fontSize: 11,
+    color: THEME.colors.textMuted,
+    marginTop: 2,
+  },
+  psiScoreBadge: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: THEME.borderRadius.sm,
+    borderWidth: 1,
+  },
+  metricScoreGood: {
+    backgroundColor: THEME.colors.passBg,
+    borderColor: THEME.colors.passBorder,
+  },
+  metricScoreAvg: {
+    backgroundColor: THEME.colors.warnBg,
+    borderColor: THEME.colors.warnBorder,
+  },
+  metricScorePoor: {
+    backgroundColor: THEME.colors.failBg,
+    borderColor: THEME.colors.failBorder,
+  },
+  metricScoreNeutral: {
+    backgroundColor: THEME.colors.surfaceLight,
+    borderColor: THEME.colors.border,
+  },
+  psiScoreNumber: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: THEME.colors.textPrimary,
+  },
+  psiScoreTotal: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: THEME.colors.textMuted,
+    marginLeft: 2,
+  },
+  vitalsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  vitalBox: {
+    flex: 1,
+    minWidth: '45%',
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    padding: 10,
+    borderRadius: THEME.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+  },
+  vitalLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.colors.textMuted,
+    marginBottom: 4,
+  },
+  vitalValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+  },
+  psiUnavailableBox: {
+    paddingVertical: 8,
+  },
+  psiUnavailableTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.textSecondary,
+    marginBottom: 4,
+  },
+  psiUnavailableReason: {
+    fontSize: 12,
+    color: THEME.colors.textMuted,
+    lineHeight: 16,
+  },
   contentCard: {
     backgroundColor: THEME.colors.surface,
     borderRadius: THEME.borderRadius.md,
@@ -393,6 +575,12 @@ const styles = StyleSheet.create({
     color: THEME.colors.textMuted,
     letterSpacing: 0.8,
     marginBottom: 8,
+  },
+  noServiceText: {
+    fontSize: 12,
+    color: THEME.colors.textMuted,
+    fontStyle: 'italic',
+    marginBottom: 4,
   },
   chipsRow: {
     flexDirection: 'row',
@@ -426,11 +614,14 @@ const styles = StyleSheet.create({
   statLabel: {
     fontSize: 13,
     color: THEME.colors.textSecondary,
+    flex: 1,
   },
   statValue: {
     fontSize: 13,
     fontWeight: '700',
     color: THEME.colors.textPrimary,
+    flex: 1,
+    textAlign: 'right',
   },
   icpCard: {
     backgroundColor: THEME.colors.surface,

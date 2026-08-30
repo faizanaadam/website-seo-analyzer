@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { StyleSheet, Text, View, ActivityIndicator } from 'react-native';
 import { THEME } from '../constants/theme';
+import { AnalysisReportData } from '../types/analysis';
+import { ApiService } from '../services/api';
+import { transformApiResponseToReport } from '../services/transformer';
 
 interface Step {
   id: number;
@@ -9,18 +12,18 @@ interface Step {
 
 const STEPS: Step[] = [
   { id: 1, label: 'Preparing website analysis' },
-  { id: 2, label: 'Checking technical SEO' },
-  { id: 3, label: 'Reviewing website content' },
-  { id: 4, label: 'Understanding your audience' },
-  { id: 5, label: 'Comparing local visibility' },
-  { id: 6, label: 'Building recommendations' },
+  { id: 2, label: 'Checking technical SEO & SSL' },
+  { id: 3, label: 'Crawling internal subpages & content depth' },
+  { id: 4, label: 'Analyzing CTAs, contact info & services' },
+  { id: 5, label: 'Evaluating Google PageSpeed mobile metrics' },
+  { id: 6, label: 'Building report & actionable recommendations' },
 ];
 
 interface LoadingStateProps {
   targetUrl: string;
-  onComplete: () => void;
+  onComplete: (data: AnalysisReportData) => void;
   shouldSimulateError?: boolean;
-  onError: () => void;
+  onError: (errorMsg: string) => void;
 }
 
 export const LoadingState: React.FC<LoadingStateProps> = ({
@@ -30,30 +33,66 @@ export const LoadingState: React.FC<LoadingStateProps> = ({
   onError,
 }) => {
   const [currentStep, setCurrentStep] = useState<number>(1);
+  const isCancelledRef = useRef<boolean>(false);
 
   useEffect(() => {
-    // Step-by-step progress timer (500ms per step = 3 seconds total simulation)
-    const interval = setInterval(() => {
+    isCancelledRef.current = false;
+
+    // Simulation error check
+    if (shouldSimulateError) {
+      const errTimer = setTimeout(() => {
+        if (!isCancelledRef.current) {
+          onError('Simulated test error: Website could not be reached or returned an error.');
+        }
+      }, 1500);
+      return () => {
+        isCancelledRef.current = true;
+        clearTimeout(errTimer);
+      };
+    }
+
+    // Advance steps 1 -> 5 smoothly while waiting for real backend response
+    const stepInterval = setInterval(() => {
       setCurrentStep((prev) => {
-        if (shouldSimulateError && prev === 3) {
-          clearInterval(interval);
-          onError();
-          return prev;
-        }
-
-        if (prev >= STEPS.length) {
-          clearInterval(interval);
-          setTimeout(() => {
-            onComplete();
-          }, 400);
-          return prev;
-        }
-        return prev + 1;
+        if (prev < 5) return prev + 1;
+        return prev;
       });
-    }, 550);
+    }, 700);
 
-    return () => clearInterval(interval);
-  }, [shouldSimulateError]);
+    // Call real backend API
+    const runAnalysis = async () => {
+      try {
+        const apiResponse = await ApiService.analyseWebsite(targetUrl);
+
+        if (isCancelledRef.current) return;
+
+        // Transform backend response into strongly typed report
+        const reportData = transformApiResponseToReport(apiResponse, targetUrl);
+
+        // Advance to final step
+        setCurrentStep(6);
+
+        setTimeout(() => {
+          if (!isCancelledRef.current) {
+            onComplete(reportData);
+          }
+        }, 400);
+      } catch (err: any) {
+        if (isCancelledRef.current) return;
+        const msg = err?.message || 'Failed to analyze website. Verify the backend server is running and accessible.';
+        onError(msg);
+      } finally {
+        clearInterval(stepInterval);
+      }
+    };
+
+    runAnalysis();
+
+    return () => {
+      isCancelledRef.current = true;
+      clearInterval(stepInterval);
+    };
+  }, [targetUrl, shouldSimulateError]);
 
   const progressPercentage = Math.min(100, Math.round((currentStep / STEPS.length) * 100));
 
@@ -63,7 +102,7 @@ export const LoadingState: React.FC<LoadingStateProps> = ({
       <View style={styles.header}>
         <ActivityIndicator size="large" color={THEME.colors.primaryLight} style={styles.spinner} />
         <Text style={styles.title}>Analysing your website</Text>
-        <Text style={styles.subtitle}>This may take a moment...</Text>
+        <Text style={styles.subtitle}>Fetching real-time SEO, content, and PageSpeed data...</Text>
         <Text style={styles.targetDomain} numberOfLines={1}>
           {targetUrl}
         </Text>
