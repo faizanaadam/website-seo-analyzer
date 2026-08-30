@@ -1,5 +1,12 @@
+import os
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
+
+# Dynamically locate backend/.env regardless of where uvicorn was started from
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = _BACKEND_DIR / ".env"
+_ROOT_ENV_FILE = _BACKEND_DIR.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -32,10 +39,11 @@ class Settings(BaseSettings):
         return self.PAGESPEED_API_KEY or self.GOOGLE_PAGESPEED_API_KEY
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(str(_ENV_FILE), str(_ROOT_ENV_FILE), ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
 
 settings = Settings()
+
