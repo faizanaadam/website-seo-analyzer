@@ -7,14 +7,25 @@ class Settings(BaseSettings):
     PORT: int = 8000
     ENVIRONMENT: str = "development"
 
-    # Future phase API key placeholders
-    LLM_PROVIDER: str = "gemini"
+    # LLM Configuration (OpenAI / Gemini)
+    LLM_PROVIDER: str = "openai"
+    OPENAI_API_KEY: Optional[str] = None
     LLM_API_KEY: Optional[str] = None
-    LLM_MODEL: str = "gemini-2.0-flash"
+    OPENAI_MODEL: Optional[str] = None
+    LLM_MODEL: str = "gpt-4o-mini"
+
     # External APIs
     PAGESPEED_API_KEY: Optional[str] = None
     GOOGLE_PAGESPEED_API_KEY: Optional[str] = None
     GOOGLE_PLACES_API_KEY: Optional[str] = None
+
+    @property
+    def openai_key(self) -> Optional[str]:
+        return self.OPENAI_API_KEY or self.LLM_API_KEY
+
+    @property
+    def openai_model(self) -> str:
+        return self.OPENAI_MODEL or self.LLM_MODEL or "gpt-4o-mini"
 
     @property
     def pagespeed_key(self) -> Optional[str]:

@@ -10,17 +10,19 @@ from app.models import (
     TechnicalSEOResultModel,
     ContentAnalysisResultModel,
     PageSpeedResultModel,
+    AIAnalysisResultModel,
 )
 from app.services.fetcher import fetch_website, DEFAULT_HEADERS
 from app.services.technical_seo import evaluate_technical_seo
 from app.services.content_analysis import analyze_content
 from app.services.pagespeed import get_pagespeed_insights
+from app.services.ai_insights import generate_ai_insights
 from app.config import settings
 
 app = FastAPI(
     title="Website SEO & Visibility Analyser API",
-    description="Backend API for automated SEO, Content, ICP, PageSpeed, and Competitor visibility assessment.",
-    version="0.5.0",
+    description="Backend API for automated SEO, Content, ICP, PageSpeed, Competitor visibility, and AI-powered recommendations.",
+    version="0.6.0",
 )
 
 # Enable CORS for mobile and web clients
@@ -45,8 +47,8 @@ async def health_check() -> HealthResponse:
 @app.post("/api/analyse", response_model=AnalysisResponse, status_code=status.HTTP_200_OK)
 async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
     """
-    Phase 5: Fetches website, evaluates Technical SEO, performs multi-page Content & CTA Analysis,
-    and integrates Google PageSpeed Insights concurrently.
+    Phase 6: Fetches website, evaluates Technical SEO, performs multi-page Content & CTA Analysis,
+    integrates Google PageSpeed Insights, and synthesizes AI-powered business insights.
     """
     result = await fetch_website(request.url)
 
@@ -73,6 +75,10 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
                 metrics=None,
                 reason="Target website could not be fetched.",
             ),
+            ai_insights=AIAnalysisResultModel(
+                status="unavailable",
+                reason="Target website could not be reached for analysis.",
+            ),
             error=result.error_type,
         )
 
@@ -90,32 +96,42 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
             return_exceptions=True,
         )
 
-    # Handle results / fallback if an unexpected exception escaped
-    final_content: Optional[ContentAnalysisResultModel] = None
-    if isinstance(content_res, ContentAnalysisResultModel):
-        final_content = content_res
-    elif isinstance(content_res, Exception):
-        final_content = None
+        # Handle results / fallback if an unexpected exception escaped
+        final_content: Optional[ContentAnalysisResultModel] = None
+        if isinstance(content_res, ContentAnalysisResultModel):
+            final_content = content_res
+        elif isinstance(content_res, Exception):
+            final_content = None
 
-    final_pagespeed: Optional[PageSpeedResultModel] = None
-    if isinstance(pagespeed_res, PageSpeedResultModel):
-        final_pagespeed = pagespeed_res
-    elif isinstance(pagespeed_res, Exception):
-        final_pagespeed = PageSpeedResultModel(
-            status="unavailable",
-            performance_score=None,
-            metrics=None,
-            reason=f"PageSpeed analysis error: {str(pagespeed_res)}",
+        final_pagespeed: Optional[PageSpeedResultModel] = None
+        if isinstance(pagespeed_res, PageSpeedResultModel):
+            final_pagespeed = pagespeed_res
+        elif isinstance(pagespeed_res, Exception):
+            final_pagespeed = PageSpeedResultModel(
+                status="unavailable",
+                performance_score=None,
+                metrics=None,
+                reason=f"PageSpeed analysis error: {str(pagespeed_res)}",
+            )
+
+        # 3. Generate AI insights from deterministic facts
+        ai_insights = await generate_ai_insights(
+            technical_seo=TechnicalSEOResultModel(**tech_eval.to_dict()),
+            content_analysis=final_content,
+            pagespeed=final_pagespeed,
+            fetch_data=RawFetchData(**result.to_dict()),
+            client=client,
         )
 
     return AnalysisResponse(
         status="success",
-        message="Website fetched, technical SEO, content, and PageSpeed analysis completed successfully.",
+        message="Website fetched, technical SEO, content, PageSpeed, and AI insights completed successfully.",
         target_url=result.final_url,
         fetch_data=RawFetchData(**result.to_dict()),
         technical_seo=TechnicalSEOResultModel(**tech_eval.to_dict()),
         content_analysis=final_content,
         pagespeed=final_pagespeed,
+        ai_insights=ai_insights,
     )
 
 

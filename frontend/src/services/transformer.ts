@@ -350,6 +350,7 @@ export function transformApiResponseToReport(
       contactInfo: contentData?.contact_info,
     },
     pagespeed: apiResponse.pagespeed,
+    ai_insights: apiResponse.ai_insights,
     icp: {
       summary: `Automated audience analysis for ${businessName}.`,
       items: icpItems,

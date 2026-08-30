@@ -147,6 +147,27 @@ class PageSpeedResultModel(BaseModel):
     reason: Optional[str] = None
 
 
+class AIRecommendationModel(BaseModel):
+    title: str
+    priority: str  # "critical" | "high" | "medium" | "low"
+    category: str  # "technical_seo" | "content" | "performance" | "visibility" | "conversion"
+    explanation: str
+    business_impact: str
+    recommended_action: str
+    estimated_effort: str  # "quick" | "moderate" | "significant"
+
+
+class AIAnalysisResultModel(BaseModel):
+    status: str  # "available" | "unavailable" | "partial"
+    overall_assessment: Optional[str] = None  # "excellent" | "good" | "moderate" | "needs_improvement" | "critical"
+    executive_summary: Optional[str] = None
+    top_priorities: List[AIRecommendationModel] = Field(default_factory=list)
+    quick_wins: List[str] = Field(default_factory=list)
+    strengths: List[str] = Field(default_factory=list)
+    limitations: List[str] = Field(default_factory=list)
+    reason: Optional[str] = None
+
+
 class AnalysisResponse(BaseModel):
     status: str
     message: str
@@ -155,5 +176,7 @@ class AnalysisResponse(BaseModel):
     technical_seo: Optional[TechnicalSEOResultModel] = None
     content_analysis: Optional[ContentAnalysisResultModel] = None
     pagespeed: Optional[PageSpeedResultModel] = None
+    ai_insights: Optional[AIAnalysisResultModel] = None
     error: Optional[str] = None
+
 

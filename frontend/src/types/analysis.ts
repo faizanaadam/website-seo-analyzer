@@ -117,6 +117,27 @@ export interface RawFetchDataPayload {
   error_message?: string | null;
 }
 
+export interface AIRecommendationItemData {
+  title: string;
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  category: 'technical_seo' | 'content' | 'performance' | 'visibility' | 'conversion';
+  explanation: string;
+  business_impact: string;
+  recommended_action: string;
+  estimated_effort: 'quick' | 'moderate' | 'significant';
+}
+
+export interface AIAnalysisResultData {
+  status: 'available' | 'unavailable' | 'partial';
+  overall_assessment?: 'excellent' | 'good' | 'moderate' | 'needs_improvement' | 'critical' | null;
+  executive_summary?: string | null;
+  top_priorities: AIRecommendationItemData[];
+  quick_wins: string[];
+  strengths: string[];
+  limitations: string[];
+  reason?: string | null;
+}
+
 export interface AnalysisApiResponse {
   status: 'success' | 'error';
   message: string;
@@ -125,6 +146,7 @@ export interface AnalysisApiResponse {
   technical_seo?: TechnicalSEOResultData | null;
   content_analysis?: ContentAnalysisResultData | null;
   pagespeed?: PageSpeedResultData | null;
+  ai_insights?: AIAnalysisResultData | null;
   error?: string | null;
 }
 
@@ -150,6 +172,7 @@ export interface AnalysisReportData {
     contactInfo?: ContactInfoData | null;
   };
   pagespeed?: PageSpeedResultData | null;
+  ai_insights?: AIAnalysisResultData | null;
   icp: {
     summary: string;
     items: ICPFindingItem[];

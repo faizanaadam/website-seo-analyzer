@@ -8,7 +8,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { THEME } from '../constants/theme';
-import { AnalysisReportData } from '../types/analysis';
+import { AnalysisReportData, AIRecommendationItemData } from '../types/analysis';
 import { QuickWinCard } from './QuickWinCard';
 import { ExpandableCard } from './ExpandableCard';
 import { StatusBadge } from './StatusBadge';
@@ -22,12 +22,41 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
   const pagespeed = data.pagespeed;
   const hasPageSpeedMetrics = pagespeed?.status === 'available' && pagespeed.metrics;
   const score = pagespeed?.performance_score;
+  const ai = data.ai_insights;
 
   const getScoreColorStyle = (val: number | null | undefined) => {
     if (val === null || val === undefined) return styles.metricScoreNeutral;
     if (val >= 90) return styles.metricScoreGood;
     if (val >= 50) return styles.metricScoreAvg;
     return styles.metricScorePoor;
+  };
+
+  const getAssessmentBadgeStyle = (assessment?: string | null) => {
+    switch (assessment?.toLowerCase()) {
+      case 'excellent':
+      case 'good':
+        return styles.assessmentGood;
+      case 'moderate':
+        return styles.assessmentModerate;
+      case 'needs_improvement':
+      case 'critical':
+        return styles.assessmentCritical;
+      default:
+        return styles.assessmentNeutral;
+    }
+  };
+
+  const getPriorityBadgeStyle = (priority: string) => {
+    switch (priority.toLowerCase()) {
+      case 'critical':
+        return styles.priorityCritical;
+      case 'high':
+        return styles.priorityHigh;
+      case 'medium':
+        return styles.priorityMedium;
+      default:
+        return styles.priorityLow;
+    }
   };
 
   return (
@@ -69,7 +98,103 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           </View>
         </View>
 
-        {/* 2. Quick Wins Section */}
+        {/* 2. AI Business & Strategic Insights Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <View>
+              <Text style={styles.sectionTitle}>🧠 AI Business & Strategic Insights</Text>
+              <Text style={styles.sectionSubtitle}>
+                Executive analysis and prioritized growth opportunities powered by OpenAI.
+              </Text>
+            </View>
+            {ai?.overall_assessment && (
+              <View style={[styles.assessmentBadge, getAssessmentBadgeStyle(ai.overall_assessment)]}>
+                <Text style={styles.assessmentText}>
+                  {ai.overall_assessment.replace('_', ' ').toUpperCase()}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {ai?.status === 'available' ? (
+            <View style={styles.aiContainer}>
+              {/* Executive Summary */}
+              {ai.executive_summary ? (
+                <View style={styles.aiExecutiveCard}>
+                  <Text style={styles.aiCardLabel}>EXECUTIVE SUMMARY</Text>
+                  <Text style={styles.aiExecutiveText}>{ai.executive_summary}</Text>
+                </View>
+              ) : null}
+
+              {/* Top Priorities */}
+              {ai.top_priorities && ai.top_priorities.length > 0 && (
+                <View style={styles.aiPrioritiesSection}>
+                  <Text style={styles.aiPrioritiesTitle}>TOP STRATEGIC PRIORITIES</Text>
+                  {ai.top_priorities.map((item: AIRecommendationItemData, idx: number) => (
+                    <View key={idx} style={styles.aiPriorityCard}>
+                      <View style={styles.aiPriorityHeader}>
+                        <View style={styles.badgeRow}>
+                          <View style={[styles.priorityPill, getPriorityBadgeStyle(item.priority)]}>
+                            <Text style={styles.priorityPillText}>{item.priority.toUpperCase()}</Text>
+                          </View>
+                          <View style={styles.categoryPill}>
+                            <Text style={styles.categoryPillText}>{item.category.replace('_', ' ')}</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.effortPill}>Effort: {item.estimated_effort}</Text>
+                      </View>
+
+                      <Text style={styles.aiPriorityItemTitle}>{item.title}</Text>
+                      <Text style={styles.aiPriorityExplanation}>{item.explanation}</Text>
+
+                      <View style={styles.aiImpactBox}>
+                        <Text style={styles.aiImpactLabel}>📈 Business Impact:</Text>
+                        <Text style={styles.aiImpactText}>{item.business_impact}</Text>
+                      </View>
+
+                      <View style={styles.aiActionBox}>
+                        <Text style={styles.aiActionLabel}>👉 Recommended Action:</Text>
+                        <Text style={styles.aiActionText}>{item.recommended_action}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Strengths & Quick Wins 2-column or list */}
+              {ai.strengths && ai.strengths.length > 0 && (
+                <View style={styles.aiStrengthsCard}>
+                  <Text style={styles.aiStrengthsTitle}>VERIFIED WEBSITE STRENGTHS</Text>
+                  {ai.strengths.map((str: string, i: number) => (
+                    <View key={i} style={styles.aiStrengthRow}>
+                      <Text style={styles.aiStrengthCheck}>✓</Text>
+                      <Text style={styles.aiStrengthText}>{str}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Limitations Notice */}
+              {ai.limitations && ai.limitations.length > 0 && (
+                <View style={styles.aiLimitationsCard}>
+                  <Text style={styles.aiLimitationsTitle}>ℹ SCOPE & LIMITATIONS</Text>
+                  {ai.limitations.map((lim: string, i: number) => (
+                    <Text key={i} style={styles.aiLimitationText}>• {lim}</Text>
+                  ))}
+                </View>
+              )}
+            </View>
+          ) : (
+            <View style={styles.aiUnavailableCard}>
+              <Text style={styles.aiUnavailableTitle}>AI Insights Unavailable</Text>
+              <Text style={styles.aiUnavailableReason}>
+                {ai?.reason || 'OpenAI analysis is currently unavailable. Deterministic SEO, Content, and PageSpeed metrics remain fully active.'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* 3. Quick Wins Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>⚡ Quick Wins</Text>
@@ -83,7 +208,7 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           ))}
         </View>
 
-        {/* 3. Technical SEO Section */}
+        {/* 4. Technical SEO Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>🛠 Technical SEO & Structure</Text>
@@ -97,7 +222,7 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           ))}
         </View>
 
-        {/* 4. Google PageSpeed Insights Section */}
+        {/* 5. Google PageSpeed Insights Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>⚡ Google PageSpeed & Core Web Vitals</Text>
@@ -153,7 +278,7 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           </View>
         </View>
 
-        {/* 5. Content & Website Structure */}
+        {/* 6. Content & Website Structure */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>📄 Content & Website Structure</Text>
@@ -211,7 +336,7 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           </View>
         </View>
 
-        {/* 6. Ideal Customer Profile Section */}
+        {/* 7. Ideal Customer Profile Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>🎯 Who Your Website Appears to Target</Text>
@@ -251,7 +376,7 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           </View>
         </View>
 
-        {/* 7. Competitor Section */}
+        {/* 8. Competitor Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>📍 Local Competitor Comparison</Text>
@@ -305,7 +430,7 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           </View>
         </View>
 
-        {/* 8. Bigger Projects Section */}
+        {/* 9. Bigger Projects Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>🚀 Longer-Term Improvements</Text>
@@ -454,6 +579,12 @@ const styles = StyleSheet.create({
   sectionHeader: {
     marginBottom: THEME.spacing.sm,
   },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: THEME.spacing.sm,
+  },
   sectionTitle: {
     fontSize: 17,
     fontWeight: '800',
@@ -463,6 +594,249 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: THEME.colors.textMuted,
     marginTop: 2,
+    lineHeight: 16,
+  },
+  assessmentBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  assessmentGood: {
+    backgroundColor: THEME.colors.passBg,
+    borderColor: THEME.colors.passBorder,
+  },
+  assessmentModerate: {
+    backgroundColor: THEME.colors.warnBg,
+    borderColor: THEME.colors.warnBorder,
+  },
+  assessmentCritical: {
+    backgroundColor: THEME.colors.failBg,
+    borderColor: THEME.colors.failBorder,
+  },
+  assessmentNeutral: {
+    backgroundColor: THEME.colors.surfaceLight,
+    borderColor: THEME.colors.border,
+  },
+  assessmentText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+    letterSpacing: 0.5,
+  },
+  aiContainer: {
+    gap: 12,
+  },
+  aiExecutiveCard: {
+    backgroundColor: 'rgba(56, 189, 248, 0.07)',
+    borderRadius: THEME.borderRadius.md,
+    padding: THEME.spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+  },
+  aiCardLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: THEME.colors.primaryLight,
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  aiExecutiveText: {
+    fontSize: 14,
+    color: THEME.colors.textPrimary,
+    lineHeight: 21,
+    fontWeight: '500',
+  },
+  aiPrioritiesSection: {
+    gap: 10,
+  },
+  aiPrioritiesTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: THEME.colors.textMuted,
+    letterSpacing: 0.8,
+    marginTop: 4,
+  },
+  aiPriorityCard: {
+    backgroundColor: THEME.colors.surface,
+    borderRadius: THEME.borderRadius.md,
+    padding: THEME.spacing.md,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+  },
+  aiPriorityHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+  },
+  priorityPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  priorityCritical: {
+    backgroundColor: THEME.colors.failBg,
+    borderColor: THEME.colors.failBorder,
+  },
+  priorityHigh: {
+    backgroundColor: 'rgba(249, 115, 22, 0.15)',
+    borderColor: 'rgba(249, 115, 22, 0.4)',
+  },
+  priorityMedium: {
+    backgroundColor: THEME.colors.warnBg,
+    borderColor: THEME.colors.warnBorder,
+  },
+  priorityLow: {
+    backgroundColor: THEME.colors.surfaceLight,
+    borderColor: THEME.colors.border,
+  },
+  priorityPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+  },
+  categoryPill: {
+    backgroundColor: THEME.colors.surfaceLight,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: THEME.colors.borderLight,
+  },
+  categoryPillText: {
+    fontSize: 10,
+    color: THEME.colors.textSecondary,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  effortPill: {
+    fontSize: 11,
+    color: THEME.colors.textMuted,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  aiPriorityItemTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: THEME.colors.textPrimary,
+    marginBottom: 4,
+  },
+  aiPriorityExplanation: {
+    fontSize: 13,
+    color: THEME.colors.textSecondary,
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  aiImpactBox: {
+    backgroundColor: 'rgba(34, 197, 94, 0.08)',
+    borderRadius: 6,
+    padding: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: THEME.colors.pass,
+    marginBottom: 8,
+  },
+  aiImpactLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.colors.pass,
+    marginBottom: 2,
+  },
+  aiImpactText: {
+    fontSize: 12,
+    color: THEME.colors.textPrimary,
+    lineHeight: 17,
+  },
+  aiActionBox: {
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+    borderRadius: 6,
+    padding: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: THEME.colors.primary,
+  },
+  aiActionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.colors.primaryLight,
+    marginBottom: 2,
+  },
+  aiActionText: {
+    fontSize: 12,
+    color: THEME.colors.textPrimary,
+    lineHeight: 17,
+  },
+  aiStrengthsCard: {
+    backgroundColor: THEME.colors.surface,
+    borderRadius: THEME.borderRadius.md,
+    padding: THEME.spacing.md,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+  },
+  aiStrengthsTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: THEME.colors.pass,
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  aiStrengthRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  aiStrengthCheck: {
+    fontSize: 13,
+    color: THEME.colors.pass,
+    fontWeight: '900',
+    marginRight: 8,
+  },
+  aiStrengthText: {
+    fontSize: 13,
+    color: THEME.colors.textSecondary,
+    lineHeight: 18,
+    flex: 1,
+  },
+  aiLimitationsCard: {
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    borderRadius: THEME.borderRadius.sm,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+  },
+  aiLimitationsTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: THEME.colors.textMuted,
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  aiLimitationText: {
+    fontSize: 12,
+    color: THEME.colors.textMuted,
+    lineHeight: 16,
+  },
+  aiUnavailableCard: {
+    backgroundColor: THEME.colors.surface,
+    borderRadius: THEME.borderRadius.md,
+    padding: THEME.spacing.md,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+  },
+  aiUnavailableTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.textSecondary,
+    marginBottom: 4,
+  },
+  aiUnavailableReason: {
+    fontSize: 12,
+    color: THEME.colors.textMuted,
     lineHeight: 16,
   },
   psiCard: {
