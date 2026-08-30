@@ -27,10 +27,12 @@ class Settings(BaseSettings):
     GOOGLE_PLACES_API_KEY: Optional[str] = None
 
     # Resilience & Timeouts
-    OPENAI_TIMEOUT_SECONDS: float = 20.0
+    OPENAI_TIMEOUT_SECONDS: float = 30.0
     OPENAI_MAX_RETRIES: int = 2
-    PAGESPEED_TIMEOUT_SECONDS: float = 12.0
+    OPENAI_DEADLINE_SECONDS: float = 45.0
+    PAGESPEED_TIMEOUT_SECONDS: float = 25.0
     PAGESPEED_MAX_RETRIES: int = 2
+    PAGESPEED_DEADLINE_SECONDS: float = 45.0
 
     @property
     def openai_key(self) -> Optional[str]:

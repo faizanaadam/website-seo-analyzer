@@ -264,7 +264,7 @@ async def test_ai_insights_timeout():
     )
 
     assert result.status == "unavailable"
-    assert "timed out" in (result.reason or "").lower()
+    assert "did not respond" in (result.reason or "").lower()
 
 
 @pytest.mark.anyio
@@ -323,7 +323,7 @@ async def test_ai_insights_validation_failure():
     )
 
     assert result.status == "unavailable"
-    assert "validate" in (result.reason or "").lower()
+    assert "expected format" in (result.reason or "").lower()
 
 
 def test_analyse_endpoint_with_ai_insights_integration():

@@ -3,7 +3,8 @@ import { API_CONFIG } from '../config';
 
 export class ApiService {
   /**
-   * Test health check endpoint on the backend
+   * Test health check endpoint on the backend.
+   * Uses API_CONFIG.TIMEOUT_MS (10s) — lightweight, fast-fail.
    */
   static async checkHealth(baseUrl: string = API_CONFIG.DEFAULT_BASE_URL): Promise<HealthResponse> {
     const cleanUrl = baseUrl.replace(/\/+$/, '');
@@ -39,7 +40,16 @@ export class ApiService {
   }
 
   /**
-   * Performs full website analysis calling backend POST /api/analyse
+   * Performs full website analysis calling backend POST /api/analyse.
+   *
+   * Timeout strategy:
+   * - Uses API_CONFIG.ANALYSIS_TIMEOUT_MS (120s) as the overall wall-clock deadline.
+   * - The backend runs PageSpeed and OpenAI as independent concurrent tasks,
+   *   each bounded by their own 45-second service deadline.
+   * - The full pipeline can legitimately take 60–90 seconds when a slow external
+   *   service approaches its individual deadline.
+   * - A 120-second frontend fence ensures we never wait indefinitely, while
+   *   also never aborting a valid analysis prematurely.
    */
   static async analyseWebsite(
     targetUrl: string,
@@ -51,8 +61,11 @@ export class ApiService {
     const payload: AnalysisRequest = { url: targetUrl };
 
     const controller = new AbortController();
-    // Allow up to 45 seconds for multi-page crawling and Google PageSpeed Insights
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    // Use ANALYSIS_TIMEOUT_MS (120s). This is intentionally longer than any
+    // single backend service deadline so we never abort a valid analysis.
+    const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.ANALYSIS_TIMEOUT_MS);
+
+    const startTime = Date.now();
 
     try {
       const response = await fetch(endpoint, {
@@ -73,24 +86,38 @@ export class ApiService {
           const errData = await response.json();
           if (errData.detail) errorDetail = errData.detail;
         } catch (e) {
-          // ignore
+          // ignore JSON parse failure on error response
         }
         throw new Error(errorDetail);
       }
 
       const data: AnalysisApiResponse = await response.json();
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      console.log(`[ApiService] analyseWebsite completed in ${elapsed}s for ${targetUrl}`);
       return data;
     } catch (error: any) {
       clearTimeout(timeoutId);
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+
       if (error.name === 'AbortError') {
-        throw new Error('Analysis timed out after 45 seconds. The target website may be very slow to respond.');
+        // The overall 120-second deadline was reached. This is unusual — it
+        // means BOTH external services (PageSpeed + OpenAI) were extremely slow
+        // or the network was interrupted. Do NOT blame the target website.
+        console.warn(`[ApiService] analyseWebsite aborted after ${elapsed}s for ${targetUrl}`);
+        throw new Error(
+          'The analysis is taking longer than expected and could not be completed. ' +
+          'One or more external services (Google PageSpeed, AI insights) may be temporarily unavailable. ' +
+          'Please try again in a moment.'
+        );
       }
+
+      console.error(`[ApiService] analyseWebsite failed after ${elapsed}s for ${targetUrl}:`, error.message);
       throw error;
     }
   }
 
   /**
-   * Test initial /api/analyse placeholder endpoint (backwards compatible)
+   * Test initial /api/analyse placeholder endpoint (backwards compatible).
    */
   static async testAnalyse(
     targetUrl: string,
@@ -99,4 +126,3 @@ export class ApiService {
     return this.analyseWebsite(targetUrl, baseUrl);
   }
 }
-

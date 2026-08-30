@@ -1,5 +1,9 @@
 import asyncio
 import httpx
+import logging
+import time
+import uuid
+from typing import Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from app.models import (
@@ -18,6 +22,8 @@ from app.services.content_analysis import analyze_content
 from app.services.pagespeed import get_pagespeed_insights
 from app.services.ai_insights import generate_ai_insights
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Website SEO & Visibility Analyser API",
@@ -47,10 +53,17 @@ async def health_check() -> HealthResponse:
 @app.post("/api/analyse", response_model=AnalysisResponse, status_code=status.HTTP_200_OK)
 async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
     """
-    Phase 6: Fetches website, evaluates Technical SEO, performs multi-page Content & CTA Analysis,
+    Phase 6.5: Fetches website, evaluates Technical SEO, performs multi-page Content & CTA Analysis,
     integrates Google PageSpeed Insights, and synthesizes AI-powered business insights.
     """
+    request_id = str(uuid.uuid4())[:8]
+    logger.info(f"[Pipeline] request_id={request_id} Starting analysis for url={request.url}")
+    total_start = time.monotonic()
+
+    fetch_start = time.monotonic()
     result = await fetch_website(request.url)
+    fetch_duration = time.monotonic() - fetch_start
+    logger.info(f"[Pipeline] request_id={request_id} Fetch completed in {fetch_duration:.2f}s success={result.success}")
 
     if not result.success:
         if result.error_type == "invalid_url":
@@ -83,31 +96,39 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
         )
 
     # 1. Evaluate technical SEO rules (synchronous)
+    tech_start = time.monotonic()
     tech_eval = evaluate_technical_seo(result)
+    tech_duration = time.monotonic() - tech_start
+    logger.info(f"[Pipeline] request_id={request_id} Technical SEO completed in {tech_duration:.2f}s")
 
     # 2. Run Content Analysis and PageSpeed Insights concurrently
+    # Note: PageSpeed now uses its own client internally, so we don't pass `client` to it.
     async with httpx.AsyncClient(headers=DEFAULT_HEADERS, follow_redirects=True, verify=False) as client:
         content_task = analyze_content(result, client=client)
-        pagespeed_task = get_pagespeed_insights(result.final_url, client=client)
+        pagespeed_task = get_pagespeed_insights(result.final_url, request_id=request_id)
 
+        concurrent_start = time.monotonic()
         content_res, pagespeed_res = await asyncio.gather(
             content_task,
             pagespeed_task,
             return_exceptions=True,
         )
+        concurrent_duration = time.monotonic() - concurrent_start
+        logger.info(f"[Pipeline] request_id={request_id} Concurrent Content+PageSpeed completed in {concurrent_duration:.2f}s")
 
         # Handle results / fallback if an unexpected exception escaped
         final_content: Optional[ContentAnalysisResultModel] = None
         if isinstance(content_res, ContentAnalysisResultModel):
             final_content = content_res
         elif isinstance(content_res, Exception):
+            logger.warning(f"[Pipeline] request_id={request_id} Content task raised exception: {content_res}")
             final_content = None
 
         final_pagespeed: Optional[PageSpeedResultModel] = None
         if isinstance(pagespeed_res, PageSpeedResultModel):
             final_pagespeed = pagespeed_res
         elif isinstance(pagespeed_res, Exception):
-            logger.warning(f"PageSpeed task raised an exception: {pagespeed_res}")
+            logger.warning(f"[Pipeline] request_id={request_id} PageSpeed task raised exception: {pagespeed_res}")
             final_pagespeed = PageSpeedResultModel(
                 status="unavailable",
                 performance_score=None,
@@ -125,22 +146,29 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
             content_analysis=final_content,
         )
 
-        # 4. Generate AI insights from deterministic facts (fault isolated)
+        # 4. Generate AI insights from deterministic facts
+        ai_start = time.monotonic()
         try:
+            # We explicitly do NOT pass `client=client` to force ai_insights to use its own client
             ai_insights = await generate_ai_insights(
                 technical_seo=tech_model,
                 content_analysis=final_content,
                 pagespeed=final_pagespeed,
                 fetch_data=raw_fetch,
                 context_intelligence=context_intel,
-                client=client,
+                request_id=request_id,
             )
         except Exception as ai_err:
-            logger.warning(f"Unexpected error in AI insights pipeline: {ai_err}")
+            logger.warning(f"[Pipeline] request_id={request_id} Unexpected error in AI insights pipeline: {ai_err}")
             ai_insights = AIAnalysisResultModel(
                 status="unavailable",
                 reason="Strategic AI analysis could not be generated at this time.",
             )
+        ai_duration = time.monotonic() - ai_start
+        logger.info(f"[Pipeline] request_id={request_id} AI Insights completed in {ai_duration:.2f}s")
+    
+    total_duration = time.monotonic() - total_start
+    logger.info(f"[Pipeline] request_id={request_id} Full analysis completed in {total_duration:.2f}s")
 
     return AnalysisResponse(
         status="success",

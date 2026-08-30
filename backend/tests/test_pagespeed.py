@@ -127,7 +127,7 @@ async def test_pagespeed_timeout():
 
     assert result.status == "unavailable"
     assert result.performance_score is None
-    assert "timed out" in result.reason.lower()
+    assert "did not return" in result.reason.lower()
 
 
 @pytest.mark.anyio

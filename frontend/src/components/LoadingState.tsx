@@ -15,7 +15,7 @@ const STEPS: Step[] = [
   { id: 2, label: 'Checking technical SEO & SSL' },
   { id: 3, label: 'Crawling internal subpages & content depth' },
   { id: 4, label: 'Analyzing CTAs, contact info & services' },
-  { id: 5, label: 'Evaluating Google PageSpeed mobile metrics' },
+  { id: 5, label: 'Running Google PageSpeed & AI insights' },
   { id: 6, label: 'Building report & actionable recommendations' },
 ];
 
@@ -168,7 +168,7 @@ export const LoadingState: React.FC<LoadingStateProps> = ({
       </View>
 
       <Text style={styles.footerNote}>
-        Auditing mobile readiness, structured data, content depth and local ranking factors.
+        {'Auditing mobile readiness, structured data, content depth and local ranking factors.\nSome analyses take 60\u201390 seconds when Google PageSpeed or AI services are running.'}
       </Text>
     </View>
   );

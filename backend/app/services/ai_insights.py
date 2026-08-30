@@ -1,7 +1,9 @@
 import asyncio
 import json
 import logging
+import random
 import re
+import time
 from typing import Optional, Dict, Any, List, Set, Tuple
 import httpx
 
@@ -14,11 +16,11 @@ from app.models import (
     PageSpeedResultModel,
     RawFetchData,
 )
+from app.services.failure_types import FailureCategory, get_user_message
 
 logger = logging.getLogger(__name__)
 
 OPENAI_CHAT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
-OPENAI_TIMEOUT = httpx.Timeout(connect=5.0, read=25.0, write=5.0, pool=10.0)
 
 SYSTEM_PROMPT = """You are an expert Technical SEO and Growth Strategist for the Website SEO & Visibility Analyser.
 
@@ -475,6 +477,28 @@ def build_compact_factual_payload(
     }
 
 
+def _ai_unavailable(category: str, request_id: str = "") -> AIAnalysisResultModel:
+    """Construct an unavailable AI result with structured failure info."""
+    user_msg = get_user_message("openai", category)
+    logger.warning(f"[OpenAI] request_id={request_id} failure_category={category} reason={user_msg}")
+    return AIAnalysisResultModel(
+        status="unavailable",
+        reason=user_msg,
+    )
+
+
+def _classify_ai_timeout(exc: httpx.TimeoutException) -> str:
+    """Classify the specific type of timeout from the httpx exception."""
+    exc_name = type(exc).__name__
+    if "Connect" in exc_name:
+        return FailureCategory.CONNECT_TIMEOUT
+    elif "Read" in exc_name:
+        return FailureCategory.READ_TIMEOUT
+    elif "Pool" in exc_name:
+        return FailureCategory.POOL_TIMEOUT
+    return FailureCategory.READ_TIMEOUT
+
+
 async def generate_ai_insights(
     technical_seo: Optional[TechnicalSEOResultModel] = None,
     content_analysis: Optional[ContentAnalysisResultModel] = None,
@@ -484,19 +508,24 @@ async def generate_ai_insights(
     client: Optional[httpx.AsyncClient] = None,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
+    request_id: str = "",
 ) -> AIAnalysisResultModel:
     """
     Generates AI-powered business and SEO insights using OpenAI API.
     Interprets deterministic findings and returns validated Pydantic models.
     Applies deterministic post-validation grounding layer to guarantee zero hallucination.
+
+    Architecture:
+    - Creates its own httpx.AsyncClient with appropriate timeouts (not shared with crawl/PageSpeed).
+    - Applies controlled retries for transient failures with exponential backoff + jitter.
+    - Enforces a 45-second overall deadline across all attempts.
+    - Classifies failures into structured categories for logging.
+    - Returns safe user-facing messages.
     """
     # 1. Resolve API key
     effective_key = api_key if api_key is not None else settings.openai_key
     if not effective_key or not effective_key.strip():
-        return AIAnalysisResultModel(
-            status="unavailable",
-            reason="OpenAI API key is not configured.",
-        )
+        return _ai_unavailable(FailureCategory.CONFIGURATION_ERROR, request_id)
 
     # 2. Build allowed-evidence registry
     registry = GroundingEvidenceRegistry(
@@ -523,7 +552,7 @@ async def generate_ai_insights(
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": f"Here is the factual audit data for the website:\n```json\n{json.dumps(payload_data, indent=2)}\n```\nGenerate the structured AI insights JSON."
+                "content": f"Here is the factual audit data for the website:\n```json\n{json.dumps(payload_data, separators=(',', ':'))}\n```\nGenerate the structured AI insights JSON."
             }
         ],
         "response_format": {"type": "json_object"},
@@ -538,40 +567,54 @@ async def generate_ai_insights(
 
     timeout_sec = settings.OPENAI_TIMEOUT_SECONDS
     max_retries = max(1, settings.OPENAI_MAX_RETRIES)
-    timeout_obj = httpx.Timeout(connect=5.0, read=timeout_sec, write=5.0, pool=10.0)
+    deadline = settings.OPENAI_DEADLINE_SECONDS
+    timeout_obj = httpx.Timeout(connect=10.0, read=timeout_sec, write=5.0, pool=10.0)
 
+    # Always create own client — never share with crawl/PageSpeed to prevent pool starvation
     own_client = False
     if client is None:
         client = httpx.AsyncClient(timeout=timeout_obj)
         own_client = True
 
+    deadline_start = time.monotonic()
+
     try:
         for attempt in range(1, max_retries + 1):
+            # Check overall deadline before each attempt
+            elapsed_total = time.monotonic() - deadline_start
+            if elapsed_total >= deadline:
+                logger.warning(
+                    f"[OpenAI] request_id={request_id} deadline_exceeded "
+                    f"total_elapsed={elapsed_total:.1f}s deadline={deadline}s"
+                )
+                return _ai_unavailable(FailureCategory.DEADLINE_EXCEEDED, request_id)
+
+            attempt_start = time.monotonic()
             try:
                 response = await client.post(
                     OPENAI_CHAT_ENDPOINT,
                     headers=headers,
                     json=request_body,
                 )
+                attempt_elapsed = time.monotonic() - attempt_start
 
                 if response.status_code == 200:
-                    if attempt > 1:
-                        logger.info(f"OpenAI request succeeded on attempt {attempt}")
+                    usage = response.json().get("usage", {})
+                    logger.info(
+                        f"[OpenAI] request_id={request_id} attempt={attempt} "
+                        f"elapsed={attempt_elapsed:.1f}s result=success "
+                        f"prompt_tokens={usage.get('prompt_tokens')} "
+                        f"completion_tokens={usage.get('completion_tokens')}"
+                    )
 
                     resp_json = response.json()
                     choices = resp_json.get("choices", [])
                     if not choices:
-                        return AIAnalysisResultModel(
-                            status="unavailable",
-                            reason="OpenAI returned an empty choice response.",
-                        )
+                        return _ai_unavailable(FailureCategory.MALFORMED_RESPONSE, request_id)
 
                     raw_content = choices[0].get("message", {}).get("content", "")
                     if not raw_content:
-                        return AIAnalysisResultModel(
-                            status="unavailable",
-                            reason="OpenAI returned empty message content.",
-                        )
+                        return _ai_unavailable(FailureCategory.MALFORMED_RESPONSE, request_id)
 
                     try:
                         parsed_data = json.loads(raw_content)
@@ -586,78 +629,83 @@ async def generate_ai_insights(
                         return grounded_model
 
                     except json.JSONDecodeError as json_err:
-                        logger.warning(f"Malformed JSON from OpenAI: {json_err}")
-                        return AIAnalysisResultModel(
-                            status="unavailable",
-                            reason="AI insights response was not valid JSON.",
-                        )
+                        logger.warning(f"[OpenAI] request_id={request_id} malformed_json: {json_err}")
+                        return _ai_unavailable(FailureCategory.MALFORMED_RESPONSE, request_id)
                     except Exception as val_err:
-                        logger.warning(f"Pydantic validation error for AI response: {val_err}")
-                        return AIAnalysisResultModel(
-                            status="unavailable",
-                            reason=f"Failed to validate AI response structure: {str(val_err)}",
-                        )
+                        logger.warning(f"[OpenAI] request_id={request_id} validation_error: {val_err}")
+                        return _ai_unavailable(FailureCategory.VALIDATION_ERROR, request_id)
 
                 # Non-transient errors: fail fast, DO NOT retry
                 elif response.status_code in (401, 403):
-                    logger.warning("OpenAI API authentication failed (HTTP 401/403). Not retrying.")
-                    return AIAnalysisResultModel(
-                        status="unavailable",
-                        reason="OpenAI API key is invalid or lacks required permissions.",
+                    logger.warning(
+                        f"[OpenAI] request_id={request_id} attempt={attempt} "
+                        f"elapsed={attempt_elapsed:.1f}s result=auth_error status={response.status_code}"
                     )
+                    return _ai_unavailable(FailureCategory.AUTHENTICATION_ERROR, request_id)
+
                 elif response.status_code == 400:
-                    logger.warning("OpenAI API bad request (HTTP 400). Not retrying.")
-                    return AIAnalysisResultModel(
-                        status="unavailable",
-                        reason="OpenAI API returned bad request error.",
+                    logger.warning(
+                        f"[OpenAI] request_id={request_id} attempt={attempt} "
+                        f"elapsed={attempt_elapsed:.1f}s result=bad_request"
                     )
+                    return _ai_unavailable(FailureCategory.INVALID_REQUEST, request_id)
 
                 # Transient errors (HTTP 429, 500, 502, 503, 504)
                 elif response.status_code in (429, 500, 502, 503, 504):
                     is_rate_limit = response.status_code == 429
-                    fail_type = "rate limit (HTTP 429)" if is_rate_limit else f"server error (HTTP {response.status_code})"
+                    category = FailureCategory.RATE_LIMITED if is_rate_limit else FailureCategory.SERVER_ERROR
+
+                    logger.info(
+                        f"[OpenAI] request_id={request_id} attempt={attempt} "
+                        f"elapsed={attempt_elapsed:.1f}s result={'rate_limited' if is_rate_limit else 'server_error'} "
+                        f"status={response.status_code}"
+                    )
 
                     if attempt < max_retries:
-                        logger.info(f"OpenAI request attempt {attempt} failed ({fail_type}). Retrying...")
-                        await asyncio.sleep(0.5 * attempt)
+                        delay = (1.0 * (2 ** (attempt - 1))) + random.uniform(0, 0.5)
+                        await asyncio.sleep(delay)
                         continue
-                    else:
-                        logger.warning(f"OpenAI request failed after {max_retries} attempts ({fail_type}).")
-                        return AIAnalysisResultModel(
-                            status="unavailable",
-                            reason="OpenAI API rate limit or quota exceeded." if is_rate_limit else "OpenAI API is temporarily unavailable.",
-                        )
+                    return _ai_unavailable(category, request_id)
 
                 else:
-                    return AIAnalysisResultModel(
-                        status="unavailable",
-                        reason=f"OpenAI API returned unexpected status code HTTP {response.status_code}.",
+                    logger.warning(
+                        f"[OpenAI] request_id={request_id} attempt={attempt} "
+                        f"elapsed={attempt_elapsed:.1f}s result=unexpected_status status={response.status_code}"
                     )
+                    return _ai_unavailable(FailureCategory.UNKNOWN_ERROR, request_id)
 
-            except (httpx.TimeoutException, httpx.NetworkError) as transient_exc:
-                err_kind = "timed out" if isinstance(transient_exc, httpx.TimeoutException) else "network error"
+            except httpx.TimeoutException as timeout_exc:
+                attempt_elapsed = time.monotonic() - attempt_start
+                category = _classify_ai_timeout(timeout_exc)
+                logger.info(
+                    f"[OpenAI] request_id={request_id} attempt={attempt} "
+                    f"elapsed={attempt_elapsed:.1f}s result=timeout category={category}"
+                )
                 if attempt < max_retries:
-                    logger.info(f"OpenAI request attempt {attempt} {err_kind}. Retrying...")
-                    await asyncio.sleep(0.5 * attempt)
+                    delay = (1.0 * (2 ** (attempt - 1))) + random.uniform(0, 0.5)
+                    await asyncio.sleep(delay)
                     continue
-                else:
-                    logger.warning(f"OpenAI request {err_kind} after {max_retries} attempts.")
-                    return AIAnalysisResultModel(
-                        status="unavailable",
-                        reason=f"OpenAI API request {err_kind} after retry.",
-                    )
+                return _ai_unavailable(category, request_id)
 
-        return AIAnalysisResultModel(
-            status="unavailable",
-            reason="AI insights could not be generated at this time.",
-        )
+            except httpx.NetworkError as net_exc:
+                attempt_elapsed = time.monotonic() - attempt_start
+                logger.info(
+                    f"[OpenAI] request_id={request_id} attempt={attempt} "
+                    f"elapsed={attempt_elapsed:.1f}s result=network_error error={type(net_exc).__name__}"
+                )
+                if attempt < max_retries:
+                    delay = (1.0 * (2 ** (attempt - 1))) + random.uniform(0, 0.5)
+                    await asyncio.sleep(delay)
+                    continue
+                return _ai_unavailable(FailureCategory.NETWORK_ERROR, request_id)
+
+        return _ai_unavailable(FailureCategory.UNKNOWN_ERROR, request_id)
 
     except Exception as exc:
-        logger.warning(f"Unexpected error in AI insights generation: {exc}")
-        return AIAnalysisResultModel(
-            status="unavailable",
-            reason="AI insights could not be generated at this time.",
-        )
+        logger.warning(f"[OpenAI] request_id={request_id} unexpected_error={exc}")
+        return _ai_unavailable(FailureCategory.UNKNOWN_ERROR, request_id)
     finally:
         if own_client:
             await client.aclose()
+
+
