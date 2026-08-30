@@ -64,6 +64,13 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ type, status, size = '
         text = THEME.colors.unknown;
         border = THEME.colors.unknown;
         break;
+      case 'inconclusive':
+        label = 'INCONCLUSIVE';
+        icon = '○';
+        bg = THEME.colors.unknownBg;
+        text = THEME.colors.unknown;
+        border = THEME.colors.unknown;
+        break;
     }
   }
 

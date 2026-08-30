@@ -24,13 +24,12 @@ SYSTEM_PROMPT = """You are an expert Technical SEO and Growth Strategist for the
 Your objective is to interpret the supplied deterministic website audit data and generate an executive-level, business-friendly analysis.
 
 CRITICAL ANTI-HALLUCINATION & INTEGRITY RULES:
-1. Grounding: Reason ONLY from the supplied factual analysis data. Do NOT fabricate, assume, or invent findings, metrics, URLs, services, or contact details not present in the payload.
-2. Fact vs Interpretation: Clearly distinguish observed FACTS (what was detected), INTERPRETATION (why it matters to the business), and RECOMMENDATIONS (specific actions to take).
-3. No False Penalties: Do NOT claim Google penalties or search index bans without direct evidence.
-4. No Guarantees: Do NOT promise guaranteed #1 rankings or specific numeric revenue gains.
-5. Limitations: Explicitly acknowledge missing or unavailable data (e.g., if PageSpeed is unavailable or bot protection limited subpage crawling).
+1. Grounding & Deterministic Context: The payload includes deterministic "business_context", "service_context", and "audience_context". You MUST treat this deterministic context as factual ground truth. You must NOT override the business category, or invent services, customer demographics, physical locations, local presence, or competitors.
+2. Local SEO Gating: Do NOT recommend Google Business Profile (GBP), Google Maps, or local customer reviews unless "has_local_presence" is TRUE or "business_context.category" is explicitly local_business / healthcare / restaurant. For technology, SaaS, eCommerce, and unknown businesses, recommend digital, technical, content, or solution-oriented initiatives.
+3. Fact vs Interpretation: Clearly distinguish observed FACTS (what was detected), INTERPRETATION (why it matters to the business), and RECOMMENDATIONS (specific actions to take).
+4. No False Penalties or Guarantees: Do NOT claim Google penalties without direct evidence. Do NOT promise guaranteed #1 rankings or specific numeric revenue gains.
+5. Limitations & Blocked Access: If the website returned an HTTP 403, 429, or bot protection challenge (content_accessible is false), state: "Automated access was challenged by edge security. We could not verify whether verified search engine crawlers such as Googlebot or Bingbot experience the same restriction." Recommend reviewing CDN/WAF logs and verified bot policies. Do NOT claim that search engine bots are definitely blocked, and do not recommend on-page content fixes.
 6. Anchor IDs: When recommending an action for a specific technical or content issue, include the exact "anchor_finding_id" (e.g. "bot_protection_detected", "image_alt_tags", "meta_description", "schema_org", "dedicated_service_pages_missing", "pagespeed_performance").
-7. Blocked / Bot-Protection Gate: If the website returned an HTTP 403, 429, or bot protection challenge (content_accessible is false), live page content could not be verified. Do NOT recommend fixing on-page content, word counts, or procedure pages. Focus on search engine crawler access (Googlebot/Bingbot whitelisting on CDN/WAF) and valid HTTPS.
 
 OUTPUT FORMAT:
 You MUST respond with a valid JSON object strictly matching this schema:
@@ -351,6 +350,7 @@ def build_compact_factual_payload(
     content_analysis: Optional[ContentAnalysisResultModel] = None,
     pagespeed: Optional[PageSpeedResultModel] = None,
     fetch_data: Optional[RawFetchData] = None,
+    context_intelligence: Optional[ContextIntelligenceResultModel] = None,
 ) -> Dict[str, Any]:
     """
     Constructs a compact factual dictionary strictly from deterministic findings.
@@ -359,20 +359,30 @@ def build_compact_factual_payload(
     target_url = fetch_data.final_url if fetch_data else "Unknown URL"
     title = fetch_data.parsed_data.title if fetch_data and fetch_data.parsed_data else None
 
+    # Derive or use context intelligence
+    if not context_intelligence:
+        from app.services.context_analysis import evaluate_context_intelligence
+        context_intelligence = evaluate_context_intelligence(fetch_data=fetch_data, content_analysis=content_analysis)
+
+    biz_ctx = context_intelligence.business_context
+    aud_ctx = context_intelligence.audience_context
+    has_local_presence = (
+        biz_ctx.category in ("local_business", "healthcare", "restaurant")
+        or bool(content_analysis and content_analysis.contact_info.address)
+    )
+
     # Technical SEO summary
     tech_findings: List[Dict[str, Any]] = []
     health_score: Optional[int] = None
     passed_count = 0
     needs_attention_count = 0
     issues_count = 0
-    inferred_category = "general"
 
     if technical_seo:
         health_score = technical_seo.summary.health_score
         passed_count = technical_seo.summary.passed_count
         needs_attention_count = technical_seo.summary.needs_attention_count
         issues_count = technical_seo.summary.issues_count
-        inferred_category = technical_seo.inferred_category
 
         for f in technical_seo.findings:
             tech_findings.append({
@@ -383,16 +393,14 @@ def build_compact_factual_payload(
                 "suggested_action": f.suggested_action,
             })
 
-    # Content stats
+    # Content & Service stats
     content_stats: Dict[str, Any] = {}
+    service_ctx: Dict[str, Any] = {}
     if content_analysis:
         content_stats = {
             "homepage_word_count": content_analysis.homepage_word_count,
             "average_word_count": content_analysis.average_word_count,
             "total_pages_analyzed": content_analysis.total_pages_analyzed,
-            "dedicated_service_pages": content_analysis.services_structure.has_dedicated_service_pages,
-            "service_pages_count": content_analysis.services_structure.service_pages_count,
-            "detected_services": content_analysis.services_structure.detected_services[:8],
             "phones_detected": len(content_analysis.ctas.phones),
             "emails_detected": len(content_analysis.ctas.emails),
             "whatsapp_detected": len(content_analysis.ctas.whatsapp) > 0,
@@ -400,6 +408,14 @@ def build_compact_factual_payload(
             "has_address": bool(content_analysis.contact_info.address),
             "has_opening_hours": bool(content_analysis.contact_info.opening_hours),
             "content_summary": content_analysis.summary,
+            "is_inconclusive": content_analysis.is_inconclusive,
+        }
+        service_ctx = {
+            "detected_services": content_analysis.services_structure.detected_services[:8],
+            "architecture": content_analysis.services_structure.service_architecture,
+            "confidence": content_analysis.services_structure.service_detection_confidence,
+            "has_dedicated_pages": content_analysis.services_structure.has_dedicated_service_pages,
+            "service_pages_count": content_analysis.services_structure.service_pages_count,
         }
 
     # PageSpeed stats
@@ -426,10 +442,25 @@ def build_compact_factual_payload(
         "fetch_error": fetch_data.error_message if fetch_data and not fetch_data.success else None,
     }
 
+    category_val = biz_ctx.category if biz_ctx.category != "unknown" else (technical_seo.inferred_category if technical_seo else "unknown")
+
     return {
         "target_url": target_url,
         "page_title": title,
-        "inferred_category": inferred_category,
+        "inferred_category": category_val,
+        "business_context": {
+            "category": category_val,
+            "confidence": biz_ctx.confidence,
+            "evidence": biz_ctx.evidence,
+            "reliability": biz_ctx.reliability,
+        },
+        "audience_context": {
+            "target_audience": aud_ctx.target_audience,
+            "confidence": aud_ctx.confidence,
+            "reliability": aud_ctx.reliability,
+        },
+        "service_context": service_ctx,
+        "has_local_presence": has_local_presence,
         "technical_seo": {
             "health_score": health_score,
             "passed_count": passed_count,
@@ -448,6 +479,7 @@ async def generate_ai_insights(
     content_analysis: Optional[ContentAnalysisResultModel] = None,
     pagespeed: Optional[PageSpeedResultModel] = None,
     fetch_data: Optional[RawFetchData] = None,
+    context_intelligence: Optional[ContextIntelligenceResultModel] = None,
     client: Optional[httpx.AsyncClient] = None,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
@@ -479,6 +511,7 @@ async def generate_ai_insights(
         content_analysis=content_analysis,
         pagespeed=pagespeed,
         fetch_data=fetch_data,
+        context_intelligence=context_intelligence,
     )
 
     effective_model = model or settings.openai_model

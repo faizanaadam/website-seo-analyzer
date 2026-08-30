@@ -124,6 +124,9 @@ class ServiceStructureModel(BaseModel):
     service_pages_count: int
     detected_services: List[str] = Field(default_factory=list)
     service_details: List[Dict[str, Any]] = Field(default_factory=list)
+    service_detection_confidence: str = "medium"  # "high" | "medium" | "low"
+    services_detected_from_homepage: bool = False
+    service_architecture: str = "homepage_centric"  # "dedicated_multi_page" | "homepage_centric" | "mixed" | "inconclusive"
 
 
 class ContentAnalysisResultModel(BaseModel):
@@ -137,6 +140,25 @@ class ContentAnalysisResultModel(BaseModel):
     summary: str
     is_inconclusive: bool = False
     inconclusive_reason: Optional[str] = None
+
+
+class BusinessContextModel(BaseModel):
+    category: str  # "technology" | "saas" | "healthcare" | "hospitality" | "restaurant" | "local_business" | "professional_services" | "ecommerce" | "education" | "nonprofit" | "media" | "general" | "unknown"
+    confidence: str  # "high" | "medium" | "low"
+    evidence: List[str] = Field(default_factory=list)
+    reliability: str = "reliable"  # "reliable" | "limited" | "inconclusive"
+
+
+class AudienceContextModel(BaseModel):
+    target_audience: str
+    confidence: str  # "high" | "medium" | "low"
+    evidence: List[str] = Field(default_factory=list)
+    reliability: str = "reliable"  # "reliable" | "limited" | "inconclusive"
+
+
+class ContextIntelligenceResultModel(BaseModel):
+    business_context: BusinessContextModel
+    audience_context: AudienceContextModel
 
 
 class PageSpeedMetricsModel(BaseModel):
@@ -183,6 +205,7 @@ class AnalysisResponse(BaseModel):
     fetch_data: Optional[RawFetchData] = None
     technical_seo: Optional[TechnicalSEOResultModel] = None
     content_analysis: Optional[ContentAnalysisResultModel] = None
+    context_intelligence: Optional[ContextIntelligenceResultModel] = None
     pagespeed: Optional[PageSpeedResultModel] = None
     ai_insights: Optional[AIAnalysisResultModel] = None
     error: Optional[str] = None

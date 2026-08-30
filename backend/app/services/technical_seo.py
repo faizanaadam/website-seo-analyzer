@@ -3,6 +3,11 @@ from typing import List, Dict, Any, Optional
 from app.services.fetcher import FetchResult
 from app.services.html_parser import ParsedHTMLData
 from app.utils.url_helpers import resolve_url, extract_domain, is_same_domain
+from app.services.recommendation_engine import (
+    get_title_suggested_action,
+    get_meta_desc_suggested_action,
+    get_structured_data_suggested_action,
+)
 
 # Healthcare and Medical keywords for observable context detection
 HEALTHCARE_KEYWORDS = [
@@ -198,39 +203,41 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
         findings.append(
             TechnicalFinding(
                 id="bot_protection_detected",
-                title="Bot Protection & Crawler Accessibility (WAF)",
+                title="Bot Protection & Automated Crawler Access (WAF)",
                 status="needs_attention",
-                summary=f"Edge security firewall returned a challenge or blocked status (HTTP {fetch_result.status_code or 403}) on crawler access.",
-                why_it_matters="Major search engines (Googlebot, Bingbot) must be able to crawl page content to index and rank pages.",
+                summary=f"Automated access to this website was challenged by edge security (HTTP {fetch_result.status_code or 403}). We could not verify whether verified search engine crawlers such as Googlebot or Bingbot experience the same restriction.",
+                why_it_matters="Search engine crawlers (Googlebot, Bingbot) must be able to crawl public content without encountering firewall blocks.",
                 evidence_found=f"HTTP {fetch_result.status_code} challenge page returned. Live page HTML was inaccessible.",
-                suggested_action="Verify edge firewall/WAF rules (Cloudflare, Akamai, AWS WAF) to ensure verified search engine bots are allowed.",
+                suggested_action="Review CDN/WAF logs and verified bot policies to confirm that legitimate search engine crawlers can access public content.",
                 is_inconclusive=False,
             )
         )
 
+        robots_ok = fetch_result.robots_txt_present
         findings.append(
             TechnicalFinding(
                 id="robots_txt",
                 title="Robots.txt Configuration",
-                status="pass" if fetch_result.robots_txt_present else "needs_attention",
-                summary="robots.txt file is present." if fetch_result.robots_txt_present else "robots.txt was not detected at /robots.txt.",
+                status="pass" if robots_ok else "needs_attention",
+                summary="robots.txt file is present." if robots_ok else "Could not verify /robots.txt due to edge security challenge.",
                 why_it_matters="Guides search engine crawlers on crawl budget and index prioritization.",
-                evidence_found=f"HTTP status on /robots.txt: {'200 OK' if fetch_result.robots_txt_present else 'Not found'}",
-                suggested_action="No action needed." if fetch_result.robots_txt_present else "Create and publish a valid robots.txt file.",
-                is_inconclusive=False,
+                evidence_found=f"HTTP status on /robots.txt: {'200 OK' if robots_ok else 'Challenged / Inconclusive'}",
+                suggested_action="No action needed." if robots_ok else "Verify robots.txt configuration and availability.",
+                is_inconclusive=not robots_ok,
             )
         )
 
+        sitemap_ok = fetch_result.sitemap_xml_present
         findings.append(
             TechnicalFinding(
                 id="sitemap_xml",
                 title="XML Sitemap",
-                status="pass" if fetch_result.sitemap_xml_present else "needs_attention",
-                summary="sitemap.xml file is present." if fetch_result.sitemap_xml_present else "sitemap.xml was not detected at standard location.",
+                status="pass" if sitemap_ok else "needs_attention",
+                summary="sitemap.xml file is present." if sitemap_ok else "Could not verify /sitemap.xml due to edge security challenge.",
                 why_it_matters="Helps search engines discover and index all core pages and services.",
-                evidence_found=f"HTTP status on /sitemap.xml: {'200 OK' if fetch_result.sitemap_xml_present else 'Not found'}",
-                suggested_action="No action needed." if fetch_result.sitemap_xml_present else "Generate and submit an XML sitemap to Google Search Console.",
-                is_inconclusive=False,
+                evidence_found=f"HTTP status on /sitemap.xml: {'200 OK' if sitemap_ok else 'Challenged / Inconclusive'}",
+                suggested_action="No action needed." if sitemap_ok else "Verify XML sitemap availability and submission in Google Search Console.",
+                is_inconclusive=not sitemap_ok,
             )
         )
 
@@ -284,6 +291,10 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
     title = parsed.title
     title_len = parsed.title_length
 
+    has_local_evidence = category in ("healthcare", "local_service") or bool(
+        parsed.structured_data_types and set(parsed.structured_data_types).intersection(LOCAL_BUSINESS_SCHEMA_TYPES)
+    )
+
     if not title or title_len == 0:
         findings.append(
             TechnicalFinding(
@@ -293,7 +304,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                 summary="Page title is missing from the <head> section.",
                 why_it_matters="The <title> tag is the single most important on-page HTML tag for search engines and user click-throughs.",
                 evidence_found="No <title> tag detected in HTML.",
-                suggested_action="Add a descriptive 30–60 character <title> tag containing your primary service and city/brand.",
+                suggested_action=get_title_suggested_action(category, has_local_evidence, 0),
             )
         )
     elif title_len < 25:
@@ -305,7 +316,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                 summary=f"Page title is too short ({title_len} characters). Recommended range is 30–60 characters.",
                 why_it_matters="Short titles miss opportunities to include relevant service keywords and geographic location.",
                 evidence_found=f"<title>{title}</title> ({title_len} chars)",
-                suggested_action="Expand title to include your business name, primary service, and location.",
+                suggested_action=get_title_suggested_action(category, has_local_evidence, title_len),
             )
         )
     elif title_len > 65:
@@ -317,7 +328,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                 summary=f"Page title is too long ({title_len} characters) and may be truncated by search engines.",
                 why_it_matters="Truncated titles cut off valuable information in Google search snippets.",
                 evidence_found=f"<title>{title}</title> ({title_len} chars)",
-                suggested_action="Shorten title to between 30 and 60 characters to prevent truncation.",
+                suggested_action=get_title_suggested_action(category, has_local_evidence, title_len),
             )
         )
     else:
@@ -348,7 +359,7 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
                 summary="Meta description is missing.",
                 why_it_matters="Without a meta description, Google auto-generates snippets that may not highlight your value proposition.",
                 evidence_found="No meta description or og:description tag detected.",
-                suggested_action="Add a compelling 120–160 character meta description outlining your services and call to action.",
+                suggested_action=get_meta_desc_suggested_action(category, has_local_evidence, is_missing=True),
             )
         )
     elif meta_len < 70:

@@ -114,22 +114,34 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
                 reason=f"PageSpeed analysis error: {str(pagespeed_res)}",
             )
 
-        # 3. Generate AI insights from deterministic facts
+        raw_fetch = RawFetchData(**result.to_dict())
+        tech_model = TechnicalSEOResultModel(**tech_eval.to_dict())
+
+        # 3. Evaluate Context Intelligence (Business categorization & audience inference)
+        from app.services.context_analysis import evaluate_context_intelligence
+        context_intel = evaluate_context_intelligence(
+            fetch_data=raw_fetch,
+            content_analysis=final_content,
+        )
+
+        # 4. Generate AI insights from deterministic facts
         ai_insights = await generate_ai_insights(
-            technical_seo=TechnicalSEOResultModel(**tech_eval.to_dict()),
+            technical_seo=tech_model,
             content_analysis=final_content,
             pagespeed=final_pagespeed,
-            fetch_data=RawFetchData(**result.to_dict()),
+            fetch_data=raw_fetch,
+            context_intelligence=context_intel,
             client=client,
         )
 
     return AnalysisResponse(
         status="success",
-        message="Website fetched, technical SEO, content, PageSpeed, and AI insights completed successfully.",
+        message="Website fetched, technical SEO, content, context intelligence, PageSpeed, and AI insights completed successfully.",
         target_url=result.final_url,
-        fetch_data=RawFetchData(**result.to_dict()),
-        technical_seo=TechnicalSEOResultModel(**tech_eval.to_dict()),
+        fetch_data=raw_fetch,
+        technical_seo=tech_model,
         content_analysis=final_content,
+        context_intelligence=context_intel,
         pagespeed=final_pagespeed,
         ai_insights=ai_insights,
     )

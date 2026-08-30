@@ -231,10 +231,11 @@ def test_extract_services_and_structure():
     ]
 
     homepage_soup = BeautifulSoup("<h1>Clinic</h1>", "html.parser")
-    svcs, details, has_dedicated, mainly_homepage = extract_services_from_content(pages, homepage_soup)
+    svcs, details, has_dedicated, mainly_homepage, from_homepage, confidence, architecture = extract_services_from_content(pages, homepage_soup)
 
     assert has_dedicated is True
     assert mainly_homepage is False
+    assert architecture == "dedicated_multi_page"
     assert "Teeth Whitening" in svcs
     assert "Dental Implants" in svcs
     assert len(details) >= 2

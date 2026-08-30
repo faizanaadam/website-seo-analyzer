@@ -2,7 +2,7 @@ export type AppState = 'input' | 'loading' | 'results' | 'error';
 
 export type CheckStatus = 'pass' | 'needs_attention' | 'fail';
 
-export type EpistemicStatus = 'fact' | 'inference' | 'unknown';
+export type EpistemicStatus = 'fact' | 'inference' | 'unknown' | 'inconclusive';
 
 export type ConfidenceLevel = 'high' | 'medium' | 'low' | 'none';
 
@@ -151,6 +151,7 @@ export interface AnalysisApiResponse {
   fetch_data?: RawFetchDataPayload | null;
   technical_seo?: TechnicalSEOResultData | null;
   content_analysis?: ContentAnalysisResultData | null;
+  context_intelligence?: ContextIntelligenceData | null;
   pagespeed?: PageSpeedResultData | null;
   ai_insights?: AIAnalysisResultData | null;
   error?: string | null;
@@ -181,6 +182,7 @@ export interface AnalysisReportData {
     is_inconclusive?: boolean;
     inconclusive_reason?: string | null;
   };
+  context_intelligence?: ContextIntelligenceData | null;
   pagespeed?: PageSpeedResultData | null;
   ai_insights?: AIAnalysisResultData | null;
   icp: {
@@ -226,6 +228,28 @@ export interface ServiceStructureData {
   service_pages_count: number;
   detected_services: string[];
   service_details: Array<{ name: string; source: string; url?: string }>;
+  service_detection_confidence?: 'high' | 'medium' | 'low';
+  services_detected_from_homepage?: boolean;
+  service_architecture?: 'dedicated_multi_page' | 'homepage_centric' | 'mixed' | 'inconclusive';
+}
+
+export interface BusinessContextData {
+  category: string;
+  confidence: 'high' | 'medium' | 'low';
+  evidence: string[];
+  reliability: 'reliable' | 'limited' | 'inconclusive';
+}
+
+export interface AudienceContextData {
+  target_audience: string;
+  confidence: 'high' | 'medium' | 'low';
+  evidence: string[];
+  reliability: 'reliable' | 'limited' | 'inconclusive';
+}
+
+export interface ContextIntelligenceData {
+  business_context: BusinessContextData;
+  audience_context: AudienceContextData;
 }
 
 export interface ContentAnalysisResultData {

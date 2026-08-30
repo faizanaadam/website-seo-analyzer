@@ -392,22 +392,32 @@ def extract_ctas_and_contact(soup: BeautifulSoup, page_url: str, base_url: str) 
 def extract_services_from_content(
     pages: List[PageContentItem],
     homepage_soup: BeautifulSoup,
-) -> Tuple[List[str], List[Dict[str, Any]], bool, bool]:
+) -> Tuple[List[str], List[Dict[str, Any]], bool, bool, bool, str, str]:
     """
     Deterministically identifies services, dedicated service pages,
-    and website service architecture.
+    and website service architecture across both dedicated pages and homepage sections.
+
+    Returns:
+        (detected_services, service_details, has_dedicated_pages, services_mainly_on_homepage,
+         services_detected_from_homepage, service_detection_confidence, service_architecture)
     """
     detected_services: List[str] = []
     service_details: List[Dict[str, Any]] = []
+    homepage_service_count = 0
 
     # 1. Collect from dedicated service pages
-    dedicated_service_pages = [p for p in pages if p.is_service_page and not p.url.rstrip("/").endswith(extract_domain(p.url))]
+    dedicated_service_pages = [
+        p for p in pages
+        if p.is_service_page and not p.url.rstrip("/").endswith(extract_domain(p.url))
+    ]
 
     for p in dedicated_service_pages:
         svc_name = p.page_name
         # Clean service name
-        svc_name = re.sub(r"^(our\s+services?|treatments?|services?)\s*[:|-]\s*", "", svc_name, flags=re.I).strip()
-        if svc_name and svc_name.lower() not in [s.lower() for s in detected_services] and svc_name.lower() not in ["services", "our services", "treatments"]:
+        svc_name = re.sub(r"^(our\s+services?|treatments?|services?|solutions?)\s*[:|-]\s*", "", svc_name, flags=re.I).strip()
+        if svc_name and svc_name.lower() not in [s.lower() for s in detected_services] and svc_name.lower() not in [
+            "services", "our services", "treatments", "solutions", "products", "overview"
+        ]:
             detected_services.append(svc_name)
             service_details.append({
                 "name": svc_name,
@@ -415,20 +425,41 @@ def extract_services_from_content(
                 "url": p.url,
             })
 
-    # 2. Collect from service sections/headings on homepage & service index pages
-    service_heading_pattern = re.compile(r"(our\s+services?|treatments?|what\s+we\s+offer|procedures?|specialties)", re.I)
+    # 2. Extract services / solutions from Homepage sections & headings
+    service_section_headers = ["services", "solutions", "what we do", "capabilities", "offerings", "products", "use cases", "our treatments", "what we offer", "platform capabilities"]
+    generic_skips = {
+        "our services", "services", "what we do", "our treatments", "overview", "read more",
+        "learn more", "contact us", "about us", "solutions", "capabilities", "get in touch",
+        "pricing", "features", "products", "case studies", "testimonials", "blog", "faq",
+        "terms of service", "privacy policy", "quick links", "menu", "navigation"
+    }
 
+    # Find section elements with service-related id/class or heading
+    for heading_tag in homepage_soup.find_all(["h1", "h2", "h3", "h4"]):
+        h_text = heading_tag.get_text(strip=True).lower()
+        if any(sec in h_text for sec in service_section_headers):
+            # Look at sibling or descendant sub-headings
+            parent_sec = heading_tag.find_parent(["section", "div", "article", "main"])
+            if parent_sec:
+                for sub_h in parent_sec.find_all(["h2", "h3", "h4", "strong"]):
+                    sub_text = sub_h.get_text(strip=True)
+                    if 3 < len(sub_text) < 55 and sub_text.lower() not in generic_skips:
+                        if sub_text.lower() not in [s.lower() for s in detected_services]:
+                            detected_services.append(sub_text)
+                            homepage_service_count += 1
+                            service_details.append({
+                                "name": sub_text,
+                                "source": "homepage_section",
+                                "url": pages[0].url if pages else "",
+                            })
+
+    # 3. Collect from headings across all analyzed pages
     for p in pages:
         for heading in p.headings:
-            # If the heading itself looks like a service under a service section
             clean_h = heading.strip()
-            # If heading is long (>60 chars) or looks like a paragraph/sentence, skip
-            if len(clean_h) < 4 or len(clean_h) > 60:
-                continue
-            if clean_h.lower() in ["our services", "services", "what we do", "our treatments", "overview", "read more", "learn more", "contact us", "about us"]:
+            if len(clean_h) < 4 or len(clean_h) > 55 or clean_h.lower() in generic_skips:
                 continue
 
-            # Check if this heading appears under a service page or is clearly a specific service
             if p.is_service_page and clean_h.lower() not in [s.lower() for s in detected_services]:
                 detected_services.append(clean_h)
                 service_details.append({
@@ -438,13 +469,35 @@ def extract_services_from_content(
                 })
 
     has_dedicated_pages = len(dedicated_service_pages) > 0
+    services_detected_from_homepage = homepage_service_count > 0
     services_mainly_on_homepage = not has_dedicated_pages and len(detected_services) > 0
 
+    # Classify architecture
+    if has_dedicated_pages and len(dedicated_service_pages) >= 2:
+        architecture = "dedicated_multi_page"
+    elif has_dedicated_pages and services_detected_from_homepage:
+        architecture = "mixed"
+    elif len(detected_services) > 0:
+        architecture = "homepage_centric"
+    else:
+        architecture = "inconclusive"
+
+    # Confidence score
+    if len(detected_services) >= 3 or (has_dedicated_pages and len(detected_services) >= 1):
+        confidence = "high"
+    elif len(detected_services) >= 1:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
     return (
-        detected_services[:20],  # cap list for clean output
+        detected_services[:20],
         service_details[:20],
         has_dedicated_pages,
         services_mainly_on_homepage,
+        services_detected_from_homepage,
+        confidence,
+        architecture,
     )
 
 
@@ -633,7 +686,15 @@ async def analyze_content(
             await client.aclose()
 
     # 4. Service and Architecture Analysis
-    detected_svcs, svc_details, has_dedicated, mainly_homepage = extract_services_from_content(
+    (
+        detected_svcs,
+        svc_details,
+        has_dedicated,
+        mainly_homepage,
+        from_homepage,
+        svc_confidence,
+        architecture,
+    ) = extract_services_from_content(
         pages=pages_analyzed,
         homepage_soup=homepage_soup,
     )
@@ -646,14 +707,23 @@ async def analyze_content(
     avg_words = int(total_words / total_analyzed) if total_analyzed > 0 else hp_word_count
 
     # Build concise summary
-    structure_desc = (
-        f"multi-page architecture with {dedicated_count} dedicated service pages"
-        if has_dedicated
-        else ("single-page/homepage-centric service presentation" if mainly_homepage else "general structure")
-    )
+    if architecture == "dedicated_multi_page":
+        structure_desc = f"multi-page architecture with {dedicated_count} dedicated service pages"
+    elif architecture == "mixed":
+        structure_desc = f"mixed architecture with {dedicated_count} dedicated subpages and homepage listings"
+    elif architecture == "homepage_centric":
+        structure_desc = "homepage-centric service presentation"
+    else:
+        structure_desc = "general content structure"
+
+    if len(detected_svcs) > 0:
+        svc_phrase = f"Identified {len(detected_svcs)} service/capability offerings"
+    else:
+        svc_phrase = "Services could not be reliably identified from the analyzed content"
+
     summary_text = (
         f"Analyzed {total_analyzed} pages ({hp_word_count} homepage words, {avg_words} avg words/page). "
-        f"Detected {len(detected_svcs)} service offerings across a {structure_desc}."
+        f"{svc_phrase} across a {structure_desc}."
     )
 
     return ContentAnalysisResultModel(
@@ -680,6 +750,9 @@ async def analyze_content(
             service_pages_count=dedicated_count,
             detected_services=detected_svcs,
             service_details=svc_details,
+            service_detection_confidence=svc_confidence,
+            services_detected_from_homepage=from_homepage,
+            service_architecture=architecture,
         ),
         summary=summary_text,
     )

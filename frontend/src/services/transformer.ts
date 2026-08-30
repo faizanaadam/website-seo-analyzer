@@ -254,27 +254,60 @@ export function transformApiResponseToReport(
     ? (contentData?.summary || 'Content analysis is inconclusive because the website returned an edge security firewall challenge (HTTP 403 / WAF).')
     : (contentData?.summary || 'Visible homepage content evaluated.');
 
-  // Inferred category & ICP
-  const category = apiResponse.technical_seo?.inferred_category || 'general';
-  const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1);
+  // Inferred category & Context Intelligence
+  const contextIntel = apiResponse.context_intelligence;
+  const bizContext = contextIntel?.business_context;
+  const audContext = contextIntel?.audience_context;
+
+  const category = bizContext?.category || apiResponse.technical_seo?.inferred_category || 'unknown';
+  const categoryLabel = category === 'unknown' ? 'General' : category.charAt(0).toUpperCase() + category.slice(1);
   const addressVal = isContentInconclusive ? null : contentData?.contact_info?.address;
+  const hasLocalPresence = Boolean(addressVal || ['local_business', 'healthcare', 'restaurant'].includes(category));
+
+  // Target audience resolution
+  let targetAudienceVal = 'Inconclusive';
+  let targetAudienceStatus: 'fact' | 'inference' | 'unknown' | 'inconclusive' = 'inconclusive';
+  let targetAudienceConf: 'high' | 'medium' | 'low' = 'low';
+  let targetAudienceEvidence = 'Insufficient observable website content to reliably determine the intended audience.';
+
+  if (audContext) {
+    targetAudienceVal = audContext.target_audience;
+    targetAudienceConf = audContext.confidence;
+    targetAudienceStatus = audContext.reliability === 'inconclusive' ? 'inconclusive' : 'inference';
+    targetAudienceEvidence = audContext.evidence.join('; ') || targetAudienceEvidence;
+  } else if (!isContentInconclusive && category !== 'unknown') {
+    targetAudienceVal = `Prospective customers looking for ${categoryLabel} offerings`;
+    targetAudienceStatus = 'inference';
+    targetAudienceConf = 'medium';
+    targetAudienceEvidence = `Inferred from observable ${category} terminology and visible keywords.`;
+  }
 
   const icpItems: ICPFindingItem[] = [
     {
       category: 'Target Audience',
-      value: `Prospective customers looking for ${category === 'general' ? 'hospitality / travel / professional services' : category} offerings`,
-      status: 'inference',
-      confidence: 'medium',
-      evidence: `Inferred from website domain (${businessName}) and industry classification.`,
+      value: targetAudienceVal,
+      status: targetAudienceStatus,
+      confidence: targetAudienceConf,
+      evidence: targetAudienceEvidence,
     },
     {
       category: 'Geographic Reach',
-      value: addressVal ? addressVal : (isContentInconclusive ? 'Inconclusive (Crawler challenged)' : 'Online / Regional focus'),
-      status: addressVal ? 'fact' : 'inference',
-      confidence: addressVal ? 'high' : 'low',
+      value: addressVal
+        ? addressVal
+        : (isContentInconclusive
+          ? 'Inconclusive (Crawler challenged)'
+          : (['technology', 'saas', 'ecommerce'].includes(category)
+            ? 'Global / National digital reach'
+            : 'Online / Regional focus')),
+      status: addressVal ? 'fact' : (isContentInconclusive ? 'inconclusive' : (['technology', 'saas'].includes(category) ? 'inference' : 'unknown')),
+      confidence: addressVal ? 'high' : (isContentInconclusive ? 'low' : 'medium'),
       evidence: addressVal
         ? `Directly observed from Schema.org address: "${addressVal}"`
-        : (isContentInconclusive ? 'Physical address could not be verified due to WAF challenge.' : 'No specific physical street address detected in structured data.'),
+        : (isContentInconclusive
+          ? 'Physical address could not be verified due to WAF challenge.'
+          : (['technology', 'saas'].includes(category)
+            ? 'Software and digital platform services operate nationally or globally without a single physical storefront constraint.'
+            : 'No specific physical street address detected in structured data.')),
     },
     {
       category: 'Service Architecture',
@@ -282,28 +315,34 @@ export function transformApiResponseToReport(
         ? 'Inconclusive (Automated crawler blocked)'
         : (dedicatedServicePages
           ? `Multi-page service architecture (${contentData?.services_structure?.service_pages_count || servicesDetected.length} dedicated pages)`
-          : 'Single-page or homepage-centric service listings'),
-      status: isContentInconclusive ? 'inference' : 'fact',
-      confidence: isContentInconclusive ? 'low' : 'high',
+          : (servicesDetected.length > 0
+            ? `Homepage-centric capability presentation (${servicesDetected.length} offerings detected)`
+            : 'Services could not be reliably identified from analyzed content')),
+      status: isContentInconclusive ? 'inconclusive' : 'fact',
+      confidence: isContentInconclusive ? 'low' : (servicesDetected.length > 0 ? 'high' : 'low'),
       evidence: isContentInconclusive
         ? 'Internal subpages could not be crawled because crawler was challenged by edge firewall.'
-        : `Deterministic internal link crawl detected ${servicesDetected.length} service offerings.`,
+        : (servicesDetected.length > 0
+          ? `Deterministic crawl identified ${servicesDetected.length} service/solution offerings.`
+          : 'No dedicated service sections or procedure subpages identified.'),
     },
   ];
 
   // Competitor benchmarks
   const compItems: CompetitorItem[] = [
     {
-      name: `${categoryLabel} Competitor Benchmark A`,
+      name: `${categoryLabel} Benchmark A`,
       rating: 4.8,
       reviewCount: 180,
-      highlight: 'Strong local Google Maps review presence and optimized Schema markup.',
+      highlight: hasLocalPresence
+        ? 'Strong local Google Maps review presence and optimized Schema markup.'
+        : 'Comprehensive dedicated solution landing pages and optimized Schema markup.',
     },
     {
-      name: `${categoryLabel} Competitor Benchmark B`,
+      name: `${categoryLabel} Benchmark B`,
       rating: 4.6,
       reviewCount: 120,
-      highlight: 'Comprehensive dedicated service pages with fast mobile load speeds.',
+      highlight: 'Dedicated procedure/capability pages with fast mobile load speeds.',
     },
   ];
 
@@ -324,13 +363,13 @@ export function transformApiResponseToReport(
   }
   if (opportunities.length === 0) {
     if (isAccessBlocked) {
-      opportunities.push('Bot Protection: Ensure verified search engine crawlers (Googlebot) are whitelisted in edge firewall');
+      opportunities.push('Bot Protection: Review CDN/WAF logs to confirm verified search engine crawlers can access public pages');
     } else {
       opportunities.push('Maintain high uptime and monitor ongoing Google indexing status');
     }
   }
 
-  // Bigger Projects
+  // Bigger Projects (Context-Aware)
   const biggerProjects: ProjectItem[] = [];
   if (isAccessBlocked) {
     biggerProjects.push({
@@ -338,27 +377,75 @@ export function transformApiResponseToReport(
       title: 'Review CDN & WAF crawler whitelist configuration',
       impact: 'High',
       estimatedEffort: '1–2 days',
-      why: 'Search engine crawlers (Googlebot, Bingbot) must be able to crawl page content without encountering firewall challenge blocks.',
+      why: 'Review CDN/WAF logs and verified bot rules to confirm that legitimate search engine crawlers (Googlebot, Bingbot) can access public content.',
     });
   }
 
-  if (!isContentInconclusive && !dedicatedServicePages) {
+  // Local SEO projects ONLY if verified local presence exists
+  if (hasLocalPresence) {
     biggerProjects.push({
-      id: 'bp-pages',
-      title: 'Build dedicated landing pages for individual services',
+      id: 'bp-gmb',
+      title: 'Optimize Google Business Profile & Local Citations',
+      impact: 'High',
+      estimatedEffort: '1–2 weeks',
+      why: 'Local map pack rankings and nearby customer conversions depend on complete Google Business Profile signals and citation accuracy.',
+    });
+    biggerProjects.push({
+      id: 'bp-reviews',
+      title: 'Establish a systematic Google Review collection workflow',
+      impact: 'High',
+      estimatedEffort: '1–2 weeks',
+      why: 'Customer reviews on Google Maps and Local Pack are top factors for customer trust and organic discovery.',
+    });
+  } else if (['technology', 'saas'].includes(category)) {
+    biggerProjects.push({
+      id: 'bp-tech-solutions',
+      title: 'Build dedicated solution and use-case landing pages',
       impact: 'High',
       estimatedEffort: '2–4 weeks',
-      why: 'Dedicated subpages allow search engines to rank your business for specific high-intent search queries.',
+      why: 'Enterprise buyers and engineering teams search by specific use cases, integrations, and pain points rather than broad category terms.',
+    });
+    biggerProjects.push({
+      id: 'bp-tech-docs',
+      title: 'Publish technical documentation, case studies, and thought leadership',
+      impact: 'High',
+      estimatedEffort: '2–3 weeks',
+      why: 'In-depth architecture overviews, developer guides, and verifiable case studies drive high-intent organic B2B search traffic.',
+    });
+  } else if (category === 'hospitality') {
+    biggerProjects.push({
+      id: 'bp-hosp-booking',
+      title: 'Optimize direct room booking funnel and accommodation schema',
+      impact: 'High',
+      estimatedEffort: '2–3 weeks',
+      why: 'Direct reservations generate higher margin and capture search queries for luxury rooms, suites, and venue amenities.',
+    });
+    biggerProjects.push({
+      id: 'bp-hosp-guides',
+      title: 'Create localized destination and area attraction guides',
+      impact: 'Medium',
+      estimatedEffort: '2–4 weeks',
+      why: 'Travelers frequently search for area guides, dining, and local experiences when selecting luxury hotels and resorts.',
+    });
+  } else {
+    // General / Unknown category
+    if (!isContentInconclusive && !dedicatedServicePages) {
+      biggerProjects.push({
+        id: 'bp-pages',
+        title: 'Build dedicated landing pages for individual offerings',
+        impact: 'High',
+        estimatedEffort: '2–4 weeks',
+        why: 'Dedicated subpages allow search engines to rank your business for specific high-intent search queries.',
+      });
+    }
+    biggerProjects.push({
+      id: 'bp-content-depth',
+      title: 'Expand content depth and topic authority across core pages',
+      impact: 'Medium',
+      estimatedEffort: '2–3 weeks',
+      why: 'Comprehensive content addressing user search intent improves organic search rankings and topical authority.',
     });
   }
-
-  biggerProjects.push({
-    id: 'bp-reviews',
-    title: 'Establish a systematic Google Review collection workflow',
-    impact: 'High',
-    estimatedEffort: '1–2 weeks',
-    why: 'Customer reviews on Google Maps and Local Pack are top factors for customer trust and organic discovery.',
-  });
 
   return {
     targetUrl,

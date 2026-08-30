@@ -324,7 +324,9 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
               </View>
             ) : (
               <>
-                <Text style={styles.cardSectionLabel}>SERVICES DETECTED ON SITE</Text>
+                <Text style={styles.cardSectionLabel}>
+                  {data.content.dedicatedServicePages ? 'SERVICES DETECTED ACROSS SUBPAGES' : 'SERVICES / CAPABILITIES IDENTIFIED'}
+                </Text>
                 {data.content.servicesDetected.length > 0 ? (
                   <View style={styles.chipsRow}>
                     {data.content.servicesDetected.map((service, i) => (
@@ -334,7 +336,7 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
                     ))}
                   </View>
                 ) : (
-                  <Text style={styles.noServiceText}>No dedicated service tags detected on crawled pages.</Text>
+                  <Text style={styles.noServiceText}>Services could not be reliably identified from the analyzed content.</Text>
                 )}
 
                 <View style={styles.contentDivider} />
