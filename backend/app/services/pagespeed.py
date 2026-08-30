@@ -14,6 +14,50 @@ logger = logging.getLogger(__name__)
 PAGESPEED_API_ENDPOINT = "https://pagespeedonline.googleapis.com/pagespeedonline/v5/runPagespeed"
 
 
+# In-memory LRU-like TTL cache for PageSpeed results: {cache_key: (PageSpeedResultModel, timestamp)}
+_pagespeed_cache: dict[str, tuple[PageSpeedResultModel, float]] = {}
+_CACHE_MAX_SIZE = 100
+
+
+def _normalize_cache_key(url: str, strategy: str = "mobile") -> str:
+    """Normalizes URL for consistent cache lookups."""
+    clean_url = url.strip().rstrip("/").lower()
+    return f"{clean_url}::{strategy}"
+
+
+def _get_from_cache(url: str, strategy: str = "mobile") -> Optional[PageSpeedResultModel]:
+    """Retrieves a cached PageSpeed result if still valid within TTL."""
+    key = _normalize_cache_key(url, strategy)
+    if key in _pagespeed_cache:
+        model, cached_at = _pagespeed_cache[key]
+        ttl = getattr(settings, "PAGESPEED_CACHE_TTL_SECONDS", 600)
+        if time.monotonic() - cached_at < ttl:
+            return model
+        else:
+            # Expired
+            del _pagespeed_cache[key]
+    return None
+
+
+def _save_to_cache(url: str, model: PageSpeedResultModel, strategy: str = "mobile") -> None:
+    """Caches a successful PageSpeed result with timestamp."""
+    if model.status != "available":
+        return  # Never cache failures or unavailable results
+
+    # Bound cache size
+    if len(_pagespeed_cache) >= _CACHE_MAX_SIZE:
+        oldest_key = min(_pagespeed_cache.keys(), key=lambda k: _pagespeed_cache[k][1])
+        del _pagespeed_cache[oldest_key]
+
+    key = _normalize_cache_key(url, strategy)
+    _pagespeed_cache[key] = (model, time.monotonic())
+
+
+def clear_pagespeed_cache() -> None:
+    """Clears the in-memory PageSpeed cache (useful for testing)."""
+    _pagespeed_cache.clear()
+
+
 def _classify_timeout(exc: httpx.TimeoutException) -> str:
     """Classify the specific type of timeout from the httpx exception."""
     exc_name = type(exc).__name__
@@ -49,12 +93,19 @@ async def get_pagespeed_insights(
     Extracts performance score and Core Web Vitals (FCP, LCP, CLS, INP, TBT).
 
     Architecture:
+    - In-memory TTL cache (default 10 minutes) avoids duplicate slow audits on repeated requests.
     - Creates its own httpx.AsyncClient with appropriate timeouts (not shared with crawl/AI).
     - Applies controlled retries for transient failures with exponential backoff + jitter.
-    - Enforces a 45-second overall deadline across all attempts.
+    - Enforces a 60-second overall deadline across all attempts.
     - Classifies failures into structured categories for logging.
     - Returns safe user-facing messages.
     """
+    # 0. Check in-memory cache
+    cached_result = _get_from_cache(url, strategy="mobile")
+    if cached_result is not None:
+        logger.info(f"[PageSpeed] request_id={request_id} cache_hit=True url={url}")
+        return cached_result
+
     # 1. Resolve API Key
     effective_key = api_key if api_key is not None else settings.pagespeed_key
     if not effective_key or not effective_key.strip():
@@ -137,12 +188,14 @@ async def get_pagespeed_insights(
                         fcp=fcp, lcp=lcp, cls=cls_val, inp=inp, tbt=tbt,
                     )
 
-                    return PageSpeedResultModel(
+                    result_model = PageSpeedResultModel(
                         status="available",
                         performance_score=performance_score,
                         metrics=metrics,
                         reason=None,
                     )
+                    _save_to_cache(url, result_model, strategy="mobile")
+                    return result_model
 
                 # --- Non-transient errors: fail fast, DO NOT retry ---
                 elif response.status_code == 400:

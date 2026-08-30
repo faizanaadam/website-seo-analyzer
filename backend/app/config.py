@@ -30,9 +30,10 @@ class Settings(BaseSettings):
     OPENAI_TIMEOUT_SECONDS: float = 30.0
     OPENAI_MAX_RETRIES: int = 2
     OPENAI_DEADLINE_SECONDS: float = 45.0
-    PAGESPEED_TIMEOUT_SECONDS: float = 25.0
+    PAGESPEED_TIMEOUT_SECONDS: float = 60.0
     PAGESPEED_MAX_RETRIES: int = 2
-    PAGESPEED_DEADLINE_SECONDS: float = 45.0
+    PAGESPEED_DEADLINE_SECONDS: float = 60.0
+    PAGESPEED_CACHE_TTL_SECONDS: int = 600
 
     @property
     def openai_key(self) -> Optional[str]:

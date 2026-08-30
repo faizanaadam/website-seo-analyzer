@@ -4,12 +4,19 @@ from fastapi.testclient import TestClient
 import httpx
 
 from app.main import app
-from app.services.pagespeed import get_pagespeed_insights
+from app.services.pagespeed import get_pagespeed_insights, clear_pagespeed_cache
 from app.models import PageSpeedResultModel, PageSpeedMetricsModel
 from app.services.fetcher import FetchResult
 from app.services.html_parser import parse_html
 
 test_client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def run_around_tests():
+    clear_pagespeed_cache()
+    yield
+    clear_pagespeed_cache()
 
 
 MOCK_SUCCESSFUL_PAGESPEED_JSON = {
@@ -270,4 +277,44 @@ async def test_pagespeed_auth_failure_no_retry():
 
     assert result.status == "unavailable"
     assert mock_client.get.call_count == 1
+
+
+@pytest.mark.anyio
+async def test_pagespeed_caching_hit():
+    """Verify that a second request for the same URL returns the cached result without making another API call."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = MOCK_SUCCESSFUL_PAGESPEED_JSON
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.get = AsyncMock(return_value=mock_resp)
+
+    # First call: cache miss, makes HTTP request
+    result1 = await get_pagespeed_insights("https://example.com", client=mock_client, api_key="test-api-key")
+    assert result1.status == "available"
+    assert result1.performance_score == 85
+    assert mock_client.get.call_count == 1
+
+    # Second call: cache hit, no HTTP request made
+    result2 = await get_pagespeed_insights("https://example.com", client=mock_client, api_key="test-api-key")
+    assert result2.status == "available"
+    assert result2.performance_score == 85
+    assert mock_client.get.call_count == 1
+
+
+@pytest.mark.anyio
+async def test_pagespeed_cache_does_not_cache_failures():
+    """Verify that failed/unavailable PageSpeed results are not cached."""
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("Timeout"))
+
+    result1 = await get_pagespeed_insights("https://example.com", client=mock_client, api_key="test-api-key")
+    assert result1.status == "unavailable"
+    assert mock_client.get.call_count == 2  # Attempt 1 + Attempt 2 retry
+
+    # Subsequent call should still attempt fresh request, not serve cached failure
+    result2 = await get_pagespeed_insights("https://example.com", client=mock_client, api_key="test-api-key")
+    assert result2.status == "unavailable"
+    assert mock_client.get.call_count == 4
+
 
