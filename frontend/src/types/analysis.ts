@@ -100,3 +100,62 @@ export interface AnalysisReportData {
   };
   biggerProjects: ProjectItem[];
 }
+
+export interface PageContentItemData {
+  url: string;
+  page_name: string;
+  word_count: number;
+  content_depth: 'Thin' | 'Moderate' | 'Comprehensive';
+  headings: string[];
+  is_service_page: boolean;
+}
+
+export interface ContactInfoData {
+  phones: string[];
+  emails: string[];
+  address?: string | null;
+  opening_hours?: string[] | null;
+}
+
+export interface CTAData {
+  phones: string[];
+  emails: string[];
+  whatsapp: string[];
+  booking_links: string[];
+  booking_providers: string[];
+}
+
+export interface ServiceStructureData {
+  has_dedicated_service_pages: boolean;
+  services_mainly_on_homepage: boolean;
+  service_pages_count: number;
+  detected_services: string[];
+  service_details: Array<{ name: string; source: string; url?: string }>;
+}
+
+export interface ContentAnalysisResultData {
+  pages_analyzed: PageContentItemData[];
+  total_pages_analyzed: number;
+  homepage_word_count: number;
+  average_word_count: number;
+  contact_info: ContactInfoData;
+  ctas: CTAData;
+  services_structure: ServiceStructureData;
+  summary: string;
+}
+
+export interface PageSpeedMetricsData {
+  fcp?: string | null;
+  lcp?: string | null;
+  cls?: number | null;
+  inp?: string | null;
+  tbt?: string | null;
+}
+
+export interface PageSpeedResultData {
+  status: 'available' | 'unavailable';
+  performance_score?: number | null;
+  metrics?: PageSpeedMetricsData | null;
+  reason?: string | null;
+}
+

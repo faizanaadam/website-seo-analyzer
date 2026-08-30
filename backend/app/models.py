@@ -89,10 +89,71 @@ class TechnicalSEOResultModel(BaseModel):
     inferred_category: str = "general"
 
 
+class PageContentItem(BaseModel):
+    url: str
+    page_name: str
+    word_count: int
+    content_depth: str  # "Thin" | "Moderate" | "Comprehensive"
+    headings: List[str] = Field(default_factory=list)
+    is_service_page: bool = False
+
+
+class ContactInfoModel(BaseModel):
+    phones: List[str] = Field(default_factory=list)
+    emails: List[str] = Field(default_factory=list)
+    address: Optional[str] = None
+    opening_hours: Optional[List[str]] = None
+
+
+class CTAModel(BaseModel):
+    phones: List[str] = Field(default_factory=list)
+    emails: List[str] = Field(default_factory=list)
+    whatsapp: List[str] = Field(default_factory=list)
+    booking_links: List[str] = Field(default_factory=list)
+    booking_providers: List[str] = Field(default_factory=list)
+
+
+class ServiceStructureModel(BaseModel):
+    has_dedicated_service_pages: bool
+    services_mainly_on_homepage: bool
+    service_pages_count: int
+    detected_services: List[str] = Field(default_factory=list)
+    service_details: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ContentAnalysisResultModel(BaseModel):
+    pages_analyzed: List[PageContentItem] = Field(default_factory=list)
+    total_pages_analyzed: int
+    homepage_word_count: int
+    average_word_count: int
+    contact_info: ContactInfoModel
+    ctas: CTAModel
+    services_structure: ServiceStructureModel
+    summary: str
+
+
+class PageSpeedMetricsModel(BaseModel):
+    fcp: Optional[str] = None
+    lcp: Optional[str] = None
+    cls: Optional[float] = None
+    inp: Optional[str] = None
+    tbt: Optional[str] = None
+
+
+class PageSpeedResultModel(BaseModel):
+    status: str  # "available" | "unavailable"
+    performance_score: Optional[int] = None
+    metrics: Optional[PageSpeedMetricsModel] = None
+    reason: Optional[str] = None
+
+
 class AnalysisResponse(BaseModel):
     status: str
     message: str
     target_url: str
     fetch_data: Optional[RawFetchData] = None
     technical_seo: Optional[TechnicalSEOResultModel] = None
+    content_analysis: Optional[ContentAnalysisResultModel] = None
+    pagespeed: Optional[PageSpeedResultModel] = None
     error: Optional[str] = None
+
