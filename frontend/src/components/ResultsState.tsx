@@ -140,6 +140,11 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
                           <View style={styles.categoryPill}>
                             <Text style={styles.categoryPillText}>{item.category.replace('_', ' ')}</Text>
                           </View>
+                          {item.anchor_finding_id ? (
+                            <View style={styles.anchorPill}>
+                              <Text style={styles.anchorPillText}>🔗 {item.anchor_finding_id.replace(/_/g, ' ')}</Text>
+                            </View>
+                          ) : null}
                         </View>
                         <Text style={styles.effortPill}>Effort: {item.estimated_effort}</Text>
                       </View>
@@ -714,6 +719,20 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: THEME.colors.textSecondary,
     fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  anchorPill: {
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+  },
+  anchorPillText: {
+    fontSize: 10,
+    color: THEME.colors.primaryLight,
+    fontWeight: '700',
     textTransform: 'capitalize',
   },
   effortPill: {

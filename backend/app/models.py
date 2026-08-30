@@ -155,6 +155,7 @@ class AIRecommendationModel(BaseModel):
     business_impact: str
     recommended_action: str
     estimated_effort: str  # "quick" | "moderate" | "significant"
+    anchor_finding_id: Optional[str] = None
 
 
 class AIAnalysisResultModel(BaseModel):

@@ -83,6 +83,15 @@ def build_mock_analysis_data():
             suggested_action="Add alt text",
         ),
         TechnicalFindingModel(
+            id="schema_org",
+            title="Structured Data (Schema.org)",
+            status="needs_attention",
+            summary="Missing LocalBusiness schema.",
+            why_it_matters="Helps local rich snippets.",
+            evidence_found="No JSON-LD blocks found",
+            suggested_action="Add LocalBusiness JSON-LD markup.",
+        ),
+        TechnicalFindingModel(
             id="ssl_https",
             title="HTTPS Security",
             status="pass",
@@ -147,7 +156,7 @@ def test_build_compact_factual_payload():
     assert payload["page_title"] == "Apex Auto Care | Austin TX"
     assert payload["inferred_category"] == "automotive"
     assert payload["technical_seo"]["health_score"] == 85
-    assert len(payload["technical_seo"]["findings"]) == 2
+    assert len(payload["technical_seo"]["findings"]) == 3
     assert payload["content_analysis"]["homepage_word_count"] == 550
     assert payload["pagespeed"]["performance_score"] == 82
     # Ensure no raw HTML or sensitive keys are present
@@ -350,3 +359,229 @@ def test_analyse_endpoint_with_ai_insights_integration():
         response_str = json.dumps(data)
         assert "sk-" not in response_str
         assert "openai_api_key" not in response_str.lower()
+
+
+@pytest.mark.anyio
+async def test_grounding_removes_recommendation_on_passed_check():
+    """Verify that recommendations attempting to fix already PASSED checks are removed."""
+    tech_seo, content, pagespeed, fetch_data = build_mock_analysis_data()
+
+    # SSL is 'pass' in mock data. Let's craft an AI response that recommends fixing SSL/HTTPS.
+    hallucinated_json = {
+        "status": "available",
+        "overall_assessment": "good",
+        "executive_summary": "Test summary",
+        "top_priorities": [
+            {
+                "title": "Install SSL Certificate to Enable HTTPS",
+                "priority": "critical",
+                "category": "technical_seo",
+                "explanation": "Your website lacks SSL encryption.",
+                "business_impact": "Security warnings will drive users away.",
+                "recommended_action": "Purchase and install an SSL certificate.",
+                "estimated_effort": "moderate",
+                "anchor_finding_id": "ssl_https"
+            },
+            {
+                "title": "Add Descriptive Alt Tags to Images",
+                "priority": "medium",
+                "category": "content",
+                "explanation": "Images are missing alt text.",
+                "business_impact": "Helps search engines understand image content.",
+                "recommended_action": "Add alt tags.",
+                "estimated_effort": "quick",
+                "anchor_finding_id": "image_alt_tags"
+            }
+        ],
+        "quick_wins": ["Install SSL certificate", "Add alt text to images"],
+        "strengths": ["Valid HTTPS encryption"],
+        "limitations": []
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(hallucinated_json)}}]
+    }
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    result = await generate_ai_insights(
+        technical_seo=tech_seo,
+        content_analysis=content,
+        pagespeed=pagespeed,
+        fetch_data=fetch_data,
+        client=mock_client,
+        api_key="valid-key",
+    )
+
+    # SSL recommendation must be discarded because SSL passed
+    titles = [p.title for p in result.top_priorities]
+    assert "Install SSL Certificate to Enable HTTPS" not in titles
+    # Image alt tag recommendation must be retained
+    assert "Add Descriptive Alt Tags to Images" in titles
+    assert result.top_priorities[0].anchor_finding_id == "image_alt_tags"
+    # Contradictory quick win must also be removed
+    assert "Install SSL certificate" not in result.quick_wins
+
+
+@pytest.mark.anyio
+async def test_grounding_removes_unsupported_hallucinated_recommendation():
+    """Verify that completely ungrounded recommendations (not matching any observed deficiency) are removed."""
+    tech_seo, content, pagespeed, fetch_data = build_mock_analysis_data()
+
+    hallucinated_json = {
+        "status": "available",
+        "overall_assessment": "needs_improvement",
+        "executive_summary": "Test summary",
+        "top_priorities": [
+            {
+                "title": "Patch SQL Injection Vulnerability in Custom Plugin",
+                "priority": "critical",
+                "category": "technical_seo",
+                "explanation": "Detected database vulnerability.",
+                "business_impact": "Prevents data breach.",
+                "recommended_action": "Update SQL queries.",
+                "estimated_effort": "significant",
+                "anchor_finding_id": "sql_injection"
+            },
+            {
+                "title": "Add Descriptive Alt Tags to Images",
+                "priority": "medium",
+                "category": "content",
+                "explanation": "Images are missing alt text.",
+                "business_impact": "Helps search engines.",
+                "recommended_action": "Add alt text.",
+                "estimated_effort": "quick",
+                "anchor_finding_id": "image_alt_tags"
+            }
+        ],
+        "quick_wins": ["Fix SQL injection", "Add alt text to images"],
+        "strengths": ["Valid HTTPS encryption"],
+        "limitations": []
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(hallucinated_json)}}]
+    }
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    result = await generate_ai_insights(
+        technical_seo=tech_seo,
+        content_analysis=content,
+        pagespeed=pagespeed,
+        fetch_data=fetch_data,
+        client=mock_client,
+        api_key="valid-key",
+    )
+
+    titles = [p.title for p in result.top_priorities]
+    assert "Patch SQL Injection Vulnerability in Custom Plugin" not in titles
+    assert "Add Descriptive Alt Tags to Images" in titles
+
+
+@pytest.mark.anyio
+async def test_grounding_removes_false_strengths():
+    """Verify that strengths claiming failed checks are filtered out."""
+    tech_seo, content, pagespeed, fetch_data = build_mock_analysis_data()
+
+    # Image alt tags is 'needs_attention' (3 images missing alt text).
+    # Let's craft an AI response that claims perfect alt text as a strength.
+    hallucinated_json = {
+        "status": "available",
+        "overall_assessment": "good",
+        "executive_summary": "Test summary",
+        "top_priorities": [
+            {
+                "title": "Add Descriptive Alt Tags to Images",
+                "priority": "medium",
+                "category": "content",
+                "explanation": "Images are missing alt text.",
+                "business_impact": "Helps SEO.",
+                "recommended_action": "Add alt text.",
+                "estimated_effort": "quick",
+                "anchor_finding_id": "image_alt_tags"
+            }
+        ],
+        "quick_wins": ["Add alt text to images"],
+        "strengths": [
+            "All images contain complete and descriptive alt attributes",  # FALSE / CONTRADICTED
+            "Valid HTTPS encryption across all pages"  # TRUE / CONFIRMED
+        ],
+        "limitations": []
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(hallucinated_json)}}]
+    }
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    result = await generate_ai_insights(
+        technical_seo=tech_seo,
+        content_analysis=content,
+        pagespeed=pagespeed,
+        fetch_data=fetch_data,
+        client=mock_client,
+        api_key="valid-key",
+    )
+
+    assert "All images contain complete and descriptive alt attributes" not in result.strengths
+    assert "Valid HTTPS encryption across all pages" in result.strengths
+
+
+@pytest.mark.anyio
+async def test_grounding_fallback_when_all_priorities_hallucinated():
+    """Verify fallback grounded priorities are generated from actual deficiencies when all AI priorities are discarded."""
+    tech_seo, content, pagespeed, fetch_data = build_mock_analysis_data()
+
+    hallucinated_json = {
+        "status": "available",
+        "overall_assessment": "needs_improvement",
+        "executive_summary": "Test summary",
+        "top_priorities": [
+            {
+                "title": "Configure Cloudflare CDN Enterprise Plan",
+                "priority": "critical",
+                "category": "performance",
+                "explanation": "Hallucinated CDN recommendation.",
+                "business_impact": "None.",
+                "recommended_action": "Purchase plan.",
+                "estimated_effort": "significant"
+            }
+        ],
+        "quick_wins": ["Buy enterprise CDN"],
+        "strengths": ["Enterprise CDN configured"],
+        "limitations": []
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(hallucinated_json)}}]
+    }
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    result = await generate_ai_insights(
+        technical_seo=tech_seo,
+        content_analysis=content,
+        pagespeed=pagespeed,
+        fetch_data=fetch_data,
+        client=mock_client,
+        api_key="valid-key",
+    )
+
+    # Grounding layer must replace the hallucinated priority with real grounded deficiency
+    assert len(result.top_priorities) >= 1
+    assert result.top_priorities[0].anchor_finding_id in ("image_alt_tags", "pagespeed_performance", "dedicated_service_pages_missing")
+

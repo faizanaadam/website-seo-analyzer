@@ -125,6 +125,7 @@ export interface AIRecommendationItemData {
   business_impact: string;
   recommended_action: string;
   estimated_effort: 'quick' | 'moderate' | 'significant';
+  anchor_finding_id?: string | null;
 }
 
 export interface AIAnalysisResultData {
