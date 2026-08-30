@@ -98,6 +98,23 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           </View>
         </View>
 
+        {/* Reliability & Crawler Accessibility Notice */}
+        {data.isAccessBlocked ? (
+          <View style={styles.reliabilityWarningCard}>
+            <View style={styles.reliabilityHeaderRow}>
+              <Text style={styles.reliabilityIcon}>🛡</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.reliabilityWarningTitle}>
+                  Automated Crawler Access Limited (WAF / Bot Protection)
+                </Text>
+                <Text style={styles.reliabilityWarningText}>
+                  {data.reliabilityNotice || 'The target website returned an edge security challenge (HTTP 403 / Akamai / Cloudflare WAF). On-page content metrics (word count, service detection, headings, image alt text) are marked inconclusive.'}
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
         {/* 2. AI Business & Strategic Insights Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeaderRow}>
@@ -293,50 +310,66 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           </View>
 
           <View style={styles.contentCard}>
-            <Text style={styles.cardSectionLabel}>SERVICES DETECTED ON SITE</Text>
-            {data.content.servicesDetected.length > 0 ? (
-              <View style={styles.chipsRow}>
-                {data.content.servicesDetected.map((service, i) => (
-                  <View key={i} style={styles.serviceChip}>
-                    <Text style={styles.serviceChipText}>✓ {service}</Text>
-                  </View>
-                ))}
+            {data.content.is_inconclusive || data.isAccessBlocked ? (
+              <View style={styles.inconclusiveContentBox}>
+                <Text style={styles.inconclusiveContentTitle}>⚠ Content Analysis Inconclusive</Text>
+                <Text style={styles.inconclusiveContentText}>
+                  {data.content.notes || 'The crawler encountered an automated access or bot-protection challenge (HTTP 403 / WAF). Content depth, service architecture, and word count metrics could not be extracted.'}
+                </Text>
+                <View style={styles.inconclusiveTipBox}>
+                  <Text style={styles.inconclusiveTipText}>
+                    💡 Tip: Ensure verified search engine crawlers (Googlebot, Bingbot) are whitelisted in your CDN/WAF rules so search engines can access and index your full site content.
+                  </Text>
+                </View>
               </View>
             ) : (
-              <Text style={styles.noServiceText}>No dedicated service tags detected on crawled pages.</Text>
-            )}
+              <>
+                <Text style={styles.cardSectionLabel}>SERVICES DETECTED ON SITE</Text>
+                {data.content.servicesDetected.length > 0 ? (
+                  <View style={styles.chipsRow}>
+                    {data.content.servicesDetected.map((service, i) => (
+                      <View key={i} style={styles.serviceChip}>
+                        <Text style={styles.serviceChipText}>✓ {service}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.noServiceText}>No dedicated service tags detected on crawled pages.</Text>
+                )}
 
-            <View style={styles.contentDivider} />
+                <View style={styles.contentDivider} />
 
-            <View style={styles.contentStatRow}>
-              <Text style={styles.statLabel}>Dedicated Service Pages:</Text>
-              <Text style={styles.statValue}>
-                {data.content.dedicatedServicePages ? '✓ Yes (Individual service routes)' : '✕ No (Single-page presentation)'}
-              </Text>
-            </View>
+                <View style={styles.contentStatRow}>
+                  <Text style={styles.statLabel}>Dedicated Service Pages:</Text>
+                  <Text style={styles.statValue}>
+                    {data.content.dedicatedServicePages ? '✓ Yes (Individual service routes)' : '✕ No (Single-page presentation)'}
+                  </Text>
+                </View>
 
-            <View style={styles.contentStatRow}>
-              <Text style={styles.statLabel}>Homepage Word Count:</Text>
-              <Text style={styles.statValue}>{data.content.homepageWordCount} words</Text>
-            </View>
+                <View style={styles.contentStatRow}>
+                  <Text style={styles.statLabel}>Homepage Word Count:</Text>
+                  <Text style={styles.statValue}>{data.content.homepageWordCount} words</Text>
+                </View>
 
-            <View style={styles.contentStatRow}>
-              <Text style={styles.statLabel}>Call-to-Action Detected:</Text>
-              <Text style={styles.statValue}>{data.content.callToActionDetected.join(', ')}</Text>
-            </View>
+                <View style={styles.contentStatRow}>
+                  <Text style={styles.statLabel}>Call-to-Action Detected:</Text>
+                  <Text style={styles.statValue}>{data.content.callToActionDetected.join(', ')}</Text>
+                </View>
 
-            {data.content.contactInfo?.address && (
-              <View style={styles.contentStatRow}>
-                <Text style={styles.statLabel}>Physical Address:</Text>
-                <Text style={styles.statValue} numberOfLines={2}>{data.content.contactInfo.address}</Text>
-              </View>
-            )}
+                {data.content.contactInfo?.address && (
+                  <View style={styles.contentStatRow}>
+                    <Text style={styles.statLabel}>Physical Address:</Text>
+                    <Text style={styles.statValue} numberOfLines={2}>{data.content.contactInfo.address}</Text>
+                  </View>
+                )}
 
-            {data.content.contactInfo?.opening_hours && data.content.contactInfo.opening_hours.length > 0 && (
-              <View style={styles.contentStatRow}>
-                <Text style={styles.statLabel}>Opening Hours:</Text>
-                <Text style={styles.statValue} numberOfLines={2}>{data.content.contactInfo.opening_hours.join('; ')}</Text>
-              </View>
+                {data.content.contactInfo?.opening_hours && data.content.contactInfo.opening_hours.length > 0 && (
+                  <View style={styles.contentStatRow}>
+                    <Text style={styles.statLabel}>Opening Hours:</Text>
+                    <Text style={styles.statValue} numberOfLines={2}>{data.content.contactInfo.opening_hours.join('; ')}</Text>
+                  </View>
+                )}
+              </>
             )}
           </View>
         </View>
@@ -951,6 +984,60 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   psiUnavailableReason: {
+    fontSize: 12,
+    color: THEME.colors.textMuted,
+    lineHeight: 16,
+  },
+  reliabilityWarningCard: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderRadius: THEME.borderRadius.md,
+    padding: THEME.spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    marginBottom: THEME.spacing.lg,
+  },
+  reliabilityHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  reliabilityIcon: {
+    fontSize: 20,
+  },
+  reliabilityWarningTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: THEME.colors.warn,
+    marginBottom: 4,
+  },
+  reliabilityWarningText: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    lineHeight: 18,
+  },
+  inconclusiveContentBox: {
+    paddingVertical: THEME.spacing.xs,
+  },
+  inconclusiveContentTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: THEME.colors.warn,
+    marginBottom: 6,
+  },
+  inconclusiveContentText: {
+    fontSize: 13,
+    color: THEME.colors.textSecondary,
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  inconclusiveTipBox: {
+    backgroundColor: THEME.colors.surfaceLight,
+    padding: THEME.spacing.sm,
+    borderRadius: THEME.borderRadius.sm,
+    borderLeftWidth: 3,
+    borderLeftColor: THEME.colors.primary,
+  },
+  inconclusiveTipText: {
     fontSize: 12,
     color: THEME.colors.textMuted,
     lineHeight: 16,

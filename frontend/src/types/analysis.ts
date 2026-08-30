@@ -78,6 +78,7 @@ export interface TechnicalFindingItem {
   evidence_found: string;
   suggested_action: string;
   affected_urls?: string[];
+  is_inconclusive?: boolean;
 }
 
 export interface TechnicalSEOResultData {
@@ -88,6 +89,8 @@ export interface TechnicalSEOResultData {
     total_checks: number;
     health_score: number;
     summary_text: string;
+    is_content_blocked?: boolean;
+    reliability_notice?: string | null;
   };
   findings: TechnicalFindingItem[];
   inferred_category?: string;
@@ -103,6 +106,8 @@ export interface RawFetchDataPayload {
   redirect_chain?: string[];
   robots_txt_present?: boolean;
   sitemap_xml_present?: boolean;
+  content_accessible?: boolean;
+  content_reliability?: string;
   parsed_data?: {
     title?: string | null;
     meta_description?: string | null;
@@ -155,6 +160,8 @@ export interface AnalysisReportData {
   targetUrl: string;
   businessName: string;
   completedAt: string;
+  isAccessBlocked?: boolean;
+  reliabilityNotice?: string | null;
   overall: {
     passedCount: number;
     needsAttentionCount: number;
@@ -171,6 +178,8 @@ export interface AnalysisReportData {
     callToActionDetected: string[];
     notes: string;
     contactInfo?: ContactInfoData | null;
+    is_inconclusive?: boolean;
+    inconclusive_reason?: string | null;
   };
   pagespeed?: PageSpeedResultData | null;
   ai_insights?: AIAnalysisResultData | null;
@@ -191,7 +200,7 @@ export interface PageContentItemData {
   url: string;
   page_name: string;
   word_count: number;
-  content_depth: 'Thin' | 'Moderate' | 'Comprehensive';
+  content_depth: 'Thin' | 'Moderate' | 'Comprehensive' | 'Inconclusive';
   headings: string[];
   is_service_page: boolean;
 }
@@ -228,6 +237,8 @@ export interface ContentAnalysisResultData {
   ctas: CTAData;
   services_structure: ServiceStructureData;
   summary: string;
+  is_inconclusive?: boolean;
+  inconclusive_reason?: string | null;
 }
 
 export interface PageSpeedMetricsData {

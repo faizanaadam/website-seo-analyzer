@@ -457,6 +457,50 @@ async def analyze_content(
     across the homepage and up to 5 prioritized internal subpages.
     """
     target_url = homepage_fetch.final_url
+
+    # Reliability Gate: If the crawler was blocked by WAF/403/429, mark content inconclusive
+    is_blocked = (
+        not getattr(homepage_fetch, "content_accessible", True)
+        or homepage_fetch.error_type == "bot_protection_detected"
+        or (homepage_fetch.status_code in (403, 429))
+    )
+    if is_blocked:
+        return ContentAnalysisResultModel(
+            pages_analyzed=[],
+            total_pages_analyzed=0,
+            homepage_word_count=0,
+            average_word_count=0,
+            contact_info=ContactInfoModel(
+                phones=[],
+                emails=[],
+                address=None,
+                opening_hours=None,
+            ),
+            ctas=CTAModel(
+                phones=[],
+                emails=[],
+                whatsapp=[],
+                booking_links=[],
+                booking_providers=[],
+            ),
+            services_structure=ServiceStructureModel(
+                has_dedicated_service_pages=False,
+                services_mainly_on_homepage=False,
+                service_pages_count=0,
+                detected_services=[],
+                service_details=[],
+            ),
+            summary=(
+                f"Automated crawler access was challenged by edge security firewall (HTTP {homepage_fetch.status_code or 403}/WAF). "
+                "Live page content, word counts, and service structure could not be analyzed."
+            ),
+            is_inconclusive=True,
+            inconclusive_reason=(
+                f"Website returned an automated access or bot-protection challenge (HTTP {homepage_fetch.status_code or 403}). "
+                "Page content cannot be evaluated as actual website copy."
+            ),
+        )
+
     pages_analyzed: List[PageContentItem] = []
 
     # Aggregated contact and CTA containers

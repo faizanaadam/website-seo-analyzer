@@ -47,6 +47,7 @@ class TechnicalFinding:
         evidence_found: str,
         suggested_action: str,
         affected_urls: Optional[List[str]] = None,
+        is_inconclusive: bool = False,
     ):
         self.id = id
         self.title = title
@@ -56,6 +57,7 @@ class TechnicalFinding:
         self.evidence_found = evidence_found
         self.suggested_action = suggested_action
         self.affected_urls = affected_urls or []
+        self.is_inconclusive = is_inconclusive
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -67,6 +69,7 @@ class TechnicalFinding:
             "evidence_found": self.evidence_found,
             "suggested_action": self.suggested_action,
             "affected_urls": self.affected_urls,
+            "is_inconclusive": self.is_inconclusive,
         }
 
 
@@ -79,6 +82,8 @@ class TechnicalSEOSummary:
         total_checks: int,
         health_score: int,
         summary_text: str,
+        is_content_blocked: bool = False,
+        reliability_notice: Optional[str] = None,
     ):
         self.passed_count = passed_count
         self.needs_attention_count = needs_attention_count
@@ -86,6 +91,8 @@ class TechnicalSEOSummary:
         self.total_checks = total_checks
         self.health_score = health_score
         self.summary_text = summary_text
+        self.is_content_blocked = is_content_blocked
+        self.reliability_notice = reliability_notice
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -95,6 +102,8 @@ class TechnicalSEOSummary:
             "total_checks": self.total_checks,
             "health_score": self.health_score,
             "summary_text": self.summary_text,
+            "is_content_blocked": self.is_content_blocked,
+            "reliability_notice": self.reliability_notice,
         }
 
 
@@ -162,6 +171,112 @@ def evaluate_technical_seo(fetch_result: FetchResult) -> TechnicalSEOResult:
 
     final_url = fetch_result.final_url
     category = detect_observable_category(parsed)
+
+    # -------------------------------------------------------------
+    # Reliability Gate: Blocked or Bot-Protected Sites (403/429/WAF)
+    # -------------------------------------------------------------
+    is_blocked = (
+        not getattr(fetch_result, "content_accessible", True)
+        or fetch_result.error_type == "bot_protection_detected"
+        or (fetch_result.status_code in (403, 429))
+    )
+    if is_blocked:
+        is_https = final_url.startswith("https://")
+        findings.append(
+            TechnicalFinding(
+                id="ssl_https",
+                title="HTTPS Security",
+                status="pass" if is_https else "fail",
+                summary="Website uses secure HTTPS encryption." if is_https else "Website is not using secure HTTPS encryption.",
+                why_it_matters="HTTPS is a confirmed Google ranking factor and protects user trust.",
+                evidence_found=f"URL scheme: {'https://' if is_https else 'http://'}",
+                suggested_action="No action needed." if is_https else "Enforce 301 redirect to HTTPS and configure SSL certificate.",
+                is_inconclusive=False,
+            )
+        )
+
+        findings.append(
+            TechnicalFinding(
+                id="bot_protection_detected",
+                title="Bot Protection & Crawler Accessibility (WAF)",
+                status="needs_attention",
+                summary=f"Edge security firewall returned a challenge or blocked status (HTTP {fetch_result.status_code or 403}) on crawler access.",
+                why_it_matters="Major search engines (Googlebot, Bingbot) must be able to crawl page content to index and rank pages.",
+                evidence_found=f"HTTP {fetch_result.status_code} challenge page returned. Live page HTML was inaccessible.",
+                suggested_action="Verify edge firewall/WAF rules (Cloudflare, Akamai, AWS WAF) to ensure verified search engine bots are allowed.",
+                is_inconclusive=False,
+            )
+        )
+
+        findings.append(
+            TechnicalFinding(
+                id="robots_txt",
+                title="Robots.txt Configuration",
+                status="pass" if fetch_result.robots_txt_present else "needs_attention",
+                summary="robots.txt file is present." if fetch_result.robots_txt_present else "robots.txt was not detected at /robots.txt.",
+                why_it_matters="Guides search engine crawlers on crawl budget and index prioritization.",
+                evidence_found=f"HTTP status on /robots.txt: {'200 OK' if fetch_result.robots_txt_present else 'Not found'}",
+                suggested_action="No action needed." if fetch_result.robots_txt_present else "Create and publish a valid robots.txt file.",
+                is_inconclusive=False,
+            )
+        )
+
+        findings.append(
+            TechnicalFinding(
+                id="sitemap_xml",
+                title="XML Sitemap",
+                status="pass" if fetch_result.sitemap_xml_present else "needs_attention",
+                summary="sitemap.xml file is present." if fetch_result.sitemap_xml_present else "sitemap.xml was not detected at standard location.",
+                why_it_matters="Helps search engines discover and index all core pages and services.",
+                evidence_found=f"HTTP status on /sitemap.xml: {'200 OK' if fetch_result.sitemap_xml_present else 'Not found'}",
+                suggested_action="No action needed." if fetch_result.sitemap_xml_present else "Generate and submit an XML sitemap to Google Search Console.",
+                is_inconclusive=False,
+            )
+        )
+
+        content_checks = [
+            ("page_title", "Page Title"),
+            ("meta_description", "Meta Description"),
+            ("heading_structure", "Heading Structure"),
+            ("image_alt_tags", "Image Alt Text"),
+            ("schema_org", "Structured Data (Schema.org)"),
+            ("mobile_viewport", "Mobile Viewport"),
+        ]
+        for check_id, check_title in content_checks:
+            findings.append(
+                TechnicalFinding(
+                    id=check_id,
+                    title=check_title,
+                    status="needs_attention",
+                    summary="Inconclusive: Automated crawler was challenged by edge firewall (HTTP 403/WAF). Content could not be verified.",
+                    why_it_matters="Search engines require direct access to HTML tags and content structure to properly rank pages.",
+                    evidence_found=f"HTTP {fetch_result.status_code or 403} challenge response. Live page content was inaccessible.",
+                    suggested_action="Ensure search engine crawlers are whitelisted on your CDN/WAF to allow verification.",
+                    is_inconclusive=True,
+                )
+            )
+
+        passed_count = sum(1 for f in findings if f.status == "pass")
+        needs_attention_count = sum(1 for f in findings if f.status == "needs_attention")
+        issues_count = sum(1 for f in findings if f.status == "fail")
+        total_checks = len(findings)
+        health_score = int(round(((passed_count * 10) + (needs_attention_count * 5)) / (total_checks * 10) * 100))
+
+        summary = TechnicalSEOSummary(
+            passed_count=passed_count,
+            needs_attention_count=needs_attention_count,
+            issues_count=issues_count,
+            total_checks=total_checks,
+            health_score=health_score,
+            summary_text="Crawler access was challenged by edge security (HTTP 403/WAF). Content-level analysis is inconclusive.",
+            is_content_blocked=True,
+            reliability_notice=f"Automated crawler access was blocked by edge security firewall (HTTP {fetch_result.status_code or 403}). Content-derived checks are inconclusive and have been suppressed from scoring penalties.",
+        )
+        return TechnicalSEOResult(
+            summary=summary,
+            findings=findings,
+            inferred_category="general",
+        )
 
     # -------------------------------------------------------------
     # 1. Page Title Check

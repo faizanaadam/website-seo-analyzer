@@ -35,6 +35,8 @@ class FetchResult:
         parsed_data: Optional[ParsedHTMLData] = None,
         robots_txt_present: bool = False,
         sitemap_xml_present: bool = False,
+        content_accessible: bool = True,
+        content_reliability: str = "reliable",
         error_type: Optional[str] = None,
         error_message: Optional[str] = None,
     ):
@@ -49,6 +51,8 @@ class FetchResult:
         self.parsed_data = parsed_data
         self.robots_txt_present = robots_txt_present
         self.sitemap_xml_present = sitemap_xml_present
+        self.content_accessible = content_accessible
+        self.content_reliability = content_reliability
         self.error_type = error_type
         self.error_message = error_message
 
@@ -63,6 +67,8 @@ class FetchResult:
             "redirect_chain": self.redirect_chain,
             "robots_txt_present": self.robots_txt_present,
             "sitemap_xml_present": self.sitemap_xml_present,
+            "content_accessible": self.content_accessible,
+            "content_reliability": self.content_reliability,
             "parsed_data": self.parsed_data.to_dict() if self.parsed_data else None,
             "error_type": self.error_type,
             "error_message": self.error_message,
@@ -80,6 +86,8 @@ async def fetch_website(raw_url: str, client: Optional[httpx.AsyncClient] = None
         return FetchResult(
             success=False,
             initial_url=raw_url,
+            content_accessible=False,
+            content_reliability="unreliable",
             error_type="invalid_url",
             error_message=str(val_err),
         )
@@ -105,19 +113,29 @@ async def fetch_website(raw_url: str, client: Optional[httpx.AsyncClient] = None
         final_url = str(response.url)
         content_type = response.headers.get("content-type", "")
 
-        # Check for bot block / WAF challenges
-        is_bot_blocked = response.status_code in (403, 503) and (
-            "cloudflare" in response.text.lower()
-            or "bot" in response.text.lower()
-            or "access denied" in response.text.lower()
-            or "edgesuite" in response.text.lower()
-            or "akamai" in response.text.lower()
-            or "incapsula" in response.text.lower()
-            or "datadome" in response.text.lower()
-            or "security challenge" in response.text.lower()
+        # Check for bot block / WAF challenges (e.g. 403 Forbidden, 429 Rate Limit, Cloudflare, Akamai)
+        lower_text = response.text.lower() if response.text else ""
+        is_bot_blocked = (
+            response.status_code in (403, 429)
+            or (
+                response.status_code in (503, 401)
+                and (
+                    "cloudflare" in lower_text
+                    or "bot" in lower_text
+                    or "access denied" in lower_text
+                    or "edgesuite" in lower_text
+                    or "akamai" in lower_text
+                    or "incapsula" in lower_text
+                    or "datadome" in lower_text
+                    or "security challenge" in lower_text
+                )
+            )
         )
         if is_bot_blocked:
             parsed_data = parse_html(response.text, final_url)
+            # Parallel check robots.txt and sitemap.xml
+            robots_present, sitemap_present = await check_robots_and_sitemap(final_url, client)
+
             return FetchResult(
                 success=True,
                 initial_url=normalized_url,
@@ -128,8 +146,12 @@ async def fetch_website(raw_url: str, client: Optional[httpx.AsyncClient] = None
                 redirect_chain=redirect_chain,
                 raw_html=response.text,
                 parsed_data=parsed_data,
+                robots_txt_present=robots_present,
+                sitemap_xml_present=sitemap_present,
+                content_accessible=False,
+                content_reliability="unreliable",
                 error_type="bot_protection_detected",
-                error_message="Website returned a bot protection challenge (HTTP 403/503). Basic metadata extracted.",
+                error_message=f"Website returned an automated access or bot-protection challenge (HTTP {response.status_code}). Page content cannot be treated as actual website copy.",
             )
 
         # Check for HTTP errors (404, 500, etc.)
@@ -145,6 +167,8 @@ async def fetch_website(raw_url: str, client: Optional[httpx.AsyncClient] = None
                 redirect_chain=redirect_chain,
                 raw_html=response.text,
                 parsed_data=parsed_data,
+                content_accessible=False,
+                content_reliability="unreliable",
                 error_type="http_error",
                 error_message=f"Server returned HTTP status code {response.status_code}",
             )

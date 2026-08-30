@@ -201,19 +201,35 @@ export function transformApiResponseToReport(
     suggestedAction: f.suggested_action,
   }));
 
+  // Check if crawler was blocked by edge firewall / WAF challenge
+  const isAccessBlocked = Boolean(
+    apiResponse.fetch_data?.content_accessible === false ||
+    apiResponse.content_analysis?.is_inconclusive ||
+    apiResponse.technical_seo?.summary?.is_content_blocked ||
+    apiResponse.fetch_data?.error_type === 'bot_protection_detected' ||
+    (apiResponse.fetch_data?.status_code && [403, 429].includes(apiResponse.fetch_data.status_code))
+  );
+
+  const reliabilityNotice =
+    apiResponse.technical_seo?.summary?.reliability_notice ||
+    apiResponse.content_analysis?.inconclusive_reason ||
+    (isAccessBlocked
+      ? 'Automated crawler access was challenged by edge security (HTTP 403/WAF). Content-level analysis is inconclusive.'
+      : null);
+
   // Quick wins
   const quickWins = generateQuickWins(apiResponse);
 
   // Content analysis
   const contentData = apiResponse.content_analysis;
-  const servicesDetected = contentData?.services_structure?.detected_services || [];
-  const dedicatedServicePages = contentData?.services_structure?.has_dedicated_service_pages || false;
-  const homepageWordCount =
-    contentData?.homepage_word_count || apiResponse.fetch_data?.parsed_data?.visible_word_count || 0;
+  const isContentInconclusive = Boolean(contentData?.is_inconclusive || isAccessBlocked);
+  const servicesDetected = isContentInconclusive ? [] : (contentData?.services_structure?.detected_services || []);
+  const dedicatedServicePages = isContentInconclusive ? false : (contentData?.services_structure?.has_dedicated_service_pages || false);
+  const homepageWordCount = isContentInconclusive ? 0 : (contentData?.homepage_word_count || apiResponse.fetch_data?.parsed_data?.visible_word_count || 0);
 
   // CTAs
   const ctaList: string[] = [];
-  if (contentData?.ctas) {
+  if (!isContentInconclusive && contentData?.ctas) {
     if (contentData.ctas.phones && contentData.ctas.phones.length > 0) {
       ctaList.push(`Phone Call (${contentData.ctas.phones[0]})`);
     }
@@ -231,45 +247,47 @@ export function transformApiResponseToReport(
   }
 
   if (ctaList.length === 0) {
-    ctaList.push('None detected');
+    ctaList.push(isContentInconclusive ? 'Inconclusive (WAF challenge)' : 'None detected');
   }
 
-  const contentNotes =
-    contentData?.summary ||
-    (apiResponse.status === 'error'
-      ? 'Content analysis was limited due to a server access challenge.'
-      : 'Visible homepage content evaluated.');
+  const contentNotes = isContentInconclusive
+    ? (contentData?.summary || 'Content analysis is inconclusive because the website returned an edge security firewall challenge (HTTP 403 / WAF).')
+    : (contentData?.summary || 'Visible homepage content evaluated.');
 
   // Inferred category & ICP
   const category = apiResponse.technical_seo?.inferred_category || 'general';
   const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1);
-  const addressVal = contentData?.contact_info?.address;
+  const addressVal = isContentInconclusive ? null : contentData?.contact_info?.address;
 
   const icpItems: ICPFindingItem[] = [
     {
       category: 'Target Audience',
-      value: `Prospective customers looking for ${category === 'general' ? 'professional services' : category} offerings`,
+      value: `Prospective customers looking for ${category === 'general' ? 'hospitality / travel / professional services' : category} offerings`,
       status: 'inference',
       confidence: 'medium',
-      evidence: `Inferred from website industry classification (${categoryLabel}) and visible keywords.`,
+      evidence: `Inferred from website domain (${businessName}) and industry classification.`,
     },
     {
       category: 'Geographic Reach',
-      value: addressVal ? addressVal : 'Online / Regional focus',
+      value: addressVal ? addressVal : (isContentInconclusive ? 'Inconclusive (Crawler challenged)' : 'Online / Regional focus'),
       status: addressVal ? 'fact' : 'inference',
-      confidence: addressVal ? 'high' : 'medium',
+      confidence: addressVal ? 'high' : 'low',
       evidence: addressVal
         ? `Directly observed from Schema.org address: "${addressVal}"`
-        : 'No specific physical street address detected in structured data.',
+        : (isContentInconclusive ? 'Physical address could not be verified due to WAF challenge.' : 'No specific physical street address detected in structured data.'),
     },
     {
       category: 'Service Architecture',
-      value: dedicatedServicePages
-        ? `Multi-page service architecture (${contentData?.services_structure?.service_pages_count || servicesDetected.length} dedicated pages)`
-        : 'Single-page or homepage-centric service listings',
-      status: 'fact',
-      confidence: 'high',
-      evidence: `Deterministic internal link crawl detected ${servicesDetected.length} service offerings.`,
+      value: isContentInconclusive
+        ? 'Inconclusive (Automated crawler blocked)'
+        : (dedicatedServicePages
+          ? `Multi-page service architecture (${contentData?.services_structure?.service_pages_count || servicesDetected.length} dedicated pages)`
+          : 'Single-page or homepage-centric service listings'),
+      status: isContentInconclusive ? 'inference' : 'fact',
+      confidence: isContentInconclusive ? 'low' : 'high',
+      evidence: isContentInconclusive
+        ? 'Internal subpages could not be crawled because crawler was challenged by edge firewall.'
+        : `Deterministic internal link crawl detected ${servicesDetected.length} service offerings.`,
     },
   ];
 
@@ -296,7 +314,7 @@ export function transformApiResponseToReport(
   for (const c of technicalChecks) {
     if (c.status === 'pass' && strengths.length < 3) {
       strengths.push(`${c.name}: ${c.summary}`);
-    } else if ((c.status === 'fail' || c.status === 'needs_attention') && opportunities.length < 3) {
+    } else if ((c.status === 'fail' || c.status === 'needs_attention') && !c.summary?.startsWith('Inconclusive') && opportunities.length < 3) {
       opportunities.push(`${c.name}: ${c.suggestedAction || c.summary}`);
     }
   }
@@ -305,12 +323,26 @@ export function transformApiResponseToReport(
     strengths.push('Active website accessible via standard web protocols');
   }
   if (opportunities.length === 0) {
-    opportunities.push('Maintain high uptime and monitor ongoing Google indexing status');
+    if (isAccessBlocked) {
+      opportunities.push('Bot Protection: Ensure verified search engine crawlers (Googlebot) are whitelisted in edge firewall');
+    } else {
+      opportunities.push('Maintain high uptime and monitor ongoing Google indexing status');
+    }
   }
 
   // Bigger Projects
   const biggerProjects: ProjectItem[] = [];
-  if (!dedicatedServicePages) {
+  if (isAccessBlocked) {
+    biggerProjects.push({
+      id: 'bp-waf',
+      title: 'Review CDN & WAF crawler whitelist configuration',
+      impact: 'High',
+      estimatedEffort: '1–2 days',
+      why: 'Search engine crawlers (Googlebot, Bingbot) must be able to crawl page content without encountering firewall challenge blocks.',
+    });
+  }
+
+  if (!isContentInconclusive && !dedicatedServicePages) {
     biggerProjects.push({
       id: 'bp-pages',
       title: 'Build dedicated landing pages for individual services',
@@ -332,6 +364,8 @@ export function transformApiResponseToReport(
     targetUrl,
     businessName,
     completedAt: 'Just now',
+    isAccessBlocked,
+    reliabilityNotice,
     overall: {
       passedCount: techSummary.passed_count,
       needsAttentionCount: techSummary.needs_attention_count,
@@ -348,6 +382,8 @@ export function transformApiResponseToReport(
       callToActionDetected: ctaList,
       notes: contentNotes,
       contactInfo: contentData?.contact_info,
+      is_inconclusive: isContentInconclusive,
+      inconclusive_reason: contentData?.inconclusive_reason,
     },
     pagespeed: apiResponse.pagespeed,
     ai_insights: apiResponse.ai_insights,
@@ -356,7 +392,7 @@ export function transformApiResponseToReport(
       items: icpItems,
     },
     competitors: {
-      disclaimer: `Benchmark comparison for ${businessName}`,
+      disclaimer: `SIMULATED BENCHMARK DATA: Real-time competitor tracking via Google Places API will be enabled in a future phase.`,
       items: compItems,
       strengths,
       opportunities,

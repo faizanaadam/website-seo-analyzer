@@ -59,6 +59,8 @@ class RawFetchData(BaseModel):
     robots_txt_present: bool = False
     sitemap_xml_present: bool = False
     parsed_data: Optional[ParsedHTMLModel] = None
+    content_accessible: bool = True
+    content_reliability: str = "reliable"  # "reliable" | "limited" | "unreliable"
     error_type: Optional[str] = None
     error_message: Optional[str] = None
 
@@ -72,6 +74,7 @@ class TechnicalFindingModel(BaseModel):
     evidence_found: str
     suggested_action: str
     affected_urls: List[str] = Field(default_factory=list)
+    is_inconclusive: bool = False
 
 
 class TechnicalSEOSummaryModel(BaseModel):
@@ -81,6 +84,8 @@ class TechnicalSEOSummaryModel(BaseModel):
     total_checks: int
     health_score: int
     summary_text: str
+    is_content_blocked: bool = False
+    reliability_notice: Optional[str] = None
 
 
 class TechnicalSEOResultModel(BaseModel):
@@ -93,7 +98,7 @@ class PageContentItem(BaseModel):
     url: str
     page_name: str
     word_count: int
-    content_depth: str  # "Thin" | "Moderate" | "Comprehensive"
+    content_depth: str  # "Thin" | "Moderate" | "Comprehensive" | "Inconclusive"
     headings: List[str] = Field(default_factory=list)
     is_service_page: bool = False
 
@@ -130,6 +135,8 @@ class ContentAnalysisResultModel(BaseModel):
     ctas: CTAModel
     services_structure: ServiceStructureModel
     summary: str
+    is_inconclusive: bool = False
+    inconclusive_reason: Optional[str] = None
 
 
 class PageSpeedMetricsModel(BaseModel):

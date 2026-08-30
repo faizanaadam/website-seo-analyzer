@@ -29,7 +29,8 @@ CRITICAL ANTI-HALLUCINATION & INTEGRITY RULES:
 3. No False Penalties: Do NOT claim Google penalties or search index bans without direct evidence.
 4. No Guarantees: Do NOT promise guaranteed #1 rankings or specific numeric revenue gains.
 5. Limitations: Explicitly acknowledge missing or unavailable data (e.g., if PageSpeed is unavailable or bot protection limited subpage crawling).
-6. Anchor IDs: When recommending an action for a specific technical or content issue, include the exact "anchor_finding_id" (e.g. "image_alt_tags", "meta_description", "schema_org", "dedicated_service_pages_missing", "pagespeed_performance").
+6. Anchor IDs: When recommending an action for a specific technical or content issue, include the exact "anchor_finding_id" (e.g. "bot_protection_detected", "image_alt_tags", "meta_description", "schema_org", "dedicated_service_pages_missing", "pagespeed_performance").
+7. Blocked / Bot-Protection Gate: If the website returned an HTTP 403, 429, or bot protection challenge (content_accessible is false), live page content could not be verified. Do NOT recommend fixing on-page content, word counts, or procedure pages. Focus on search engine crawler access (Googlebot/Bingbot whitelisting on CDN/WAF) and valid HTTPS.
 
 OUTPUT FORMAT:
 You MUST respond with a valid JSON object strictly matching this schema:
@@ -79,7 +80,7 @@ TOPIC_KEYWORDS: Dict[str, List[str]] = {
     "cta_missing": ["cta", "call to action", "call-to-action", "phone link", "booking link", "contact form", "appointment", "online booking"],
     "address_missing": ["address", "physical location", "street address", "google maps"],
     "pagespeed_performance": ["pagespeed", "core web vitals", "lcp", "cls", "tbt", "inp", "fcp", "page speed", "loading speed", "slow mobile"],
-    "bot_protection_detected": ["bot protection", "waf", "firewall", "akamai", "cloudflare", "challenge", "403 forbidden"],
+    "bot_protection_detected": ["bot protection", "waf", "firewall", "akamai", "cloudflare", "challenge", "403 forbidden", "crawler access", "bot access", "whitelist"],
 }
 
 
@@ -99,9 +100,19 @@ class GroundingEvidenceRegistry:
         self.passed_checks: Dict[str, Dict[str, Any]] = {}
         self.confirmed_strengths: List[str] = []
 
+        is_blocked = (
+            (fetch_data and (not fetch_data.content_accessible or fetch_data.error_type == "bot_protection_detected" or fetch_data.status_code in (403, 429)))
+            or (content_analysis and content_analysis.is_inconclusive)
+            or (technical_seo and technical_seo.summary.is_content_blocked)
+        )
+
         # 1. Technical SEO checks
         if technical_seo:
             for f in technical_seo.findings:
+                # Do not register inconclusive findings as real deficiencies of the site
+                if getattr(f, "is_inconclusive", False):
+                    continue
+
                 if f.status in ("fail", "needs_attention"):
                     self.deficiencies[f.id] = {
                         "id": f.id,
@@ -120,8 +131,8 @@ class GroundingEvidenceRegistry:
                     }
                     self.confirmed_strengths.append(f"{f.title}: Confirmed passing in technical audit")
 
-        # 2. Content Analysis deficiencies / strengths
-        if content_analysis:
+        # 2. Content Analysis deficiencies / strengths (only if content was reliably accessible)
+        if content_analysis and not is_blocked:
             if not content_analysis.services_structure.has_dedicated_service_pages:
                 self.deficiencies["dedicated_service_pages_missing"] = {
                     "id": "dedicated_service_pages_missing",
@@ -198,13 +209,13 @@ class GroundingEvidenceRegistry:
                     self.confirmed_strengths.append(f"Fast Google PageSpeed mobile score ({score}/100)")
 
         # 4. Bot Protection Challenge
-        if fetch_data and fetch_data.error_type == "bot_protection_detected":
+        if is_blocked:
             self.deficiencies["bot_protection_detected"] = {
                 "id": "bot_protection_detected",
-                "title": "Bot Protection / WAF Challenge",
+                "title": "Bot Protection & Crawler Access (WAF)",
                 "status": "needs_attention",
-                "summary": "Edge security firewall returned challenge status.",
-                "suggested_action": "Ensure search engine crawlers are allowed in firewall whitelist.",
+                "summary": "Edge security firewall returned a challenge or blocked response on crawler access.",
+                "suggested_action": "Ensure search engine crawlers (Googlebot, Bingbot) are whitelisted in CDN/WAF rules.",
                 "category": "technical_seo",
             }
 
@@ -406,7 +417,12 @@ def build_compact_factual_payload(
     # Diagnostics
     diagnostics = {
         "http_status": fetch_data.status_code if fetch_data else None,
-        "bot_protection_detected": fetch_data.error_type == "bot_protection_detected" if fetch_data else False,
+        "content_accessible": getattr(fetch_data, "content_accessible", True) if fetch_data else True,
+        "bot_protection_detected": (
+            fetch_data.error_type == "bot_protection_detected"
+            or (fetch_data.status_code in (403, 429))
+            or not getattr(fetch_data, "content_accessible", True)
+        ) if fetch_data else False,
         "fetch_error": fetch_data.error_message if fetch_data and not fetch_data.success else None,
     }
 
