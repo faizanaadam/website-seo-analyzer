@@ -19,8 +19,9 @@ from app.services.failure_types import FailureCategory, get_user_message
 
 logger = logging.getLogger(__name__)
 
-PLACES_TEXT_SEARCH_ENDPOINT = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-PLACES_DETAILS_ENDPOINT = "https://maps.googleapis.com/maps/api/place/details/json"
+# Google Places API (New) Endpoints
+PLACES_SEARCH_NEW_ENDPOINT = "https://places.googleapis.com/v1/places:searchText"
+PLACES_DETAILS_NEW_ENDPOINT = "https://places.googleapis.com/v1/places/{place_id}"
 
 # In-memory LRU-like TTL cache for Places results: {cache_key: (CompetitorAnalysisModel, timestamp)}
 _places_cache: Dict[str, Tuple[CompetitorAnalysisModel, float]] = {}
@@ -28,17 +29,34 @@ _CACHE_MAX_SIZE = 100
 
 # Category to Google Places search term mapping
 CATEGORY_SEARCH_TERMS = {
-    "healthcare": "dental clinic medical clinic",
-    "hospitality": "hotel resort luxury hotel",
-    "restaurant": "restaurant dining cafe",
-    "local_business": "auto repair garage local service contractor",
-    "professional_services": "law firm accounting consulting",
-    "technology": "software technology company",
-    "saas": "software company",
-    "ecommerce": "retail store shop",
-    "education": "school academy university",
-    "nonprofit": "nonprofit community organization",
+    "healthcare": "medical clinics",
+    "hospitality": "hotels",
+    "restaurant": "restaurants",
+    "local_business": "auto repair contractors",
+    "professional_services": "law firms accounting services",
+    "technology": "technology companies",
+    "saas": "software companies",
+    "ecommerce": "retail stores",
+    "education": "schools educational centers",
+    "nonprofit": "community organizations",
 }
+
+
+def extract_search_locality(addr: str) -> str:
+    """
+    Extracts the broader city/locality/region portion from a detailed street address
+    so that Google Places text search queries find nearby competitors across the locality
+    rather than restricting to a single building/room number.
+    """
+    clean = " ".join(addr.split())
+    parts = [p.strip() for p in clean.split(",") if p.strip()]
+    if len(parts) <= 2:
+        return clean
+    if len(parts) >= 4:
+        return ", ".join(parts[-3:])
+    elif len(parts) == 3:
+        return ", ".join(parts[-2:])
+    return clean
 
 
 def _normalize_cache_key(category: str, location: str) -> str:
@@ -119,19 +137,15 @@ def extract_deterministic_location(
 ) -> Optional[str]:
     """
     Extracts physical business location ONLY from confirmed deterministic signals:
-    - Schema.org LocalBusiness / PostalAddress
-    - Explicit physical address in verified website HTML / contact info
+    - Schema.org LocalBusiness / PostalAddress / MedicalClinic
+    - Microdata itemprop="address"
+    - Explicit physical address detected in verified website HTML / contact info
     Never infers from IP, user location, phone country code alone, or domain name.
     """
     if content_analysis and content_analysis.contact_info and content_analysis.contact_info.address:
         addr = content_analysis.contact_info.address.strip()
         if len(addr) >= 3:
             return addr
-
-    # Fallback to parsed structured data if available in fetch_data
-    if fetch_data and fetch_data.parsed_data:
-        # Check if address was extracted in visible text or structured elements
-        pass
 
     return None
 
@@ -183,7 +197,7 @@ def determine_competitor_eligibility(
 
 
 def _extract_domain(url: Optional[str]) -> str:
-    """Extracts clean base domain for matching (e.g. 'apexautocare.com')."""
+    """Extracts clean base domain for matching (e.g. 'dayspringind.com')."""
     if not url:
         return ""
     try:
@@ -194,14 +208,15 @@ def _extract_domain(url: Optional[str]) -> str:
         return ""
 
 
-def _rank_and_filter_candidates(
+def _rank_and_filter_candidates_new_api(
     places_results: List[Dict[str, Any]],
     target_url: str,
     target_name: str,
     target_address: Optional[str] = None,
 ) -> List[CompetitorModel]:
     """
-    Filters out target business and duplicates, then ranks candidates by relevance:
+    Filters out target business and duplicates from Google Places API (New) response,
+    then ranks candidates by relevance:
     1. Category/type relevance
     2. Geographic proximity / address presence
     3. Rating (>= 3.0 preferred)
@@ -217,8 +232,17 @@ def _rank_and_filter_candidates(
     seen_names = set()
 
     for item in places_results:
-        place_id = item.get("place_id")
-        name = item.get("name", "").strip()
+        place_id = item.get("id") or item.get("place_id")
+        
+        # In Places API (New), displayName is an object {"text": "Name", "languageCode": "en"}
+        display_name_obj = item.get("displayName")
+        if isinstance(display_name_obj, dict):
+            name = display_name_obj.get("text", "").strip()
+        elif isinstance(display_name_obj, str):
+            name = display_name_obj.strip()
+        else:
+            name = item.get("name", "").strip()
+
         if not place_id or not name:
             continue
 
@@ -229,17 +253,19 @@ def _rank_and_filter_candidates(
         if clean_name in seen_names:
             continue
 
-        # Exclude target business itself by place name match or domain
-        item_website = item.get("website", "")
+        # Exclude target business itself by website domain
+        item_website = item.get("websiteUri") or item.get("website", "")
         item_domain = _extract_domain(item_website)
         if target_domain and item_domain and target_domain == item_domain:
             continue
 
+        # Exclude target business by name match
         if clean_target_name and (clean_name == clean_target_name or (len(clean_target_name) > 4 and clean_target_name in clean_name)):
             continue
 
-        item_address = item.get("formatted_address") or item.get("vicinity") or ""
-        if target_address and item_address and target_address.lower() == item_address.lower():
+        # Exclude target business by address match
+        item_address = item.get("formattedAddress") or item.get("formatted_address") or item.get("vicinity") or ""
+        if target_address and item_address and (target_address.lower() in item_address.lower() or item_address.lower() in target_address.lower()):
             continue
 
         rating = item.get("rating")
@@ -248,7 +274,7 @@ def _rank_and_filter_candidates(
         except (ValueError, TypeError):
             rating_val = None
 
-        review_count = item.get("user_ratings_total")
+        review_count = item.get("userRatingCount") or item.get("user_ratings_total")
         try:
             review_count_val = int(review_count) if review_count is not None else None
         except (ValueError, TypeError):
@@ -258,10 +284,10 @@ def _rank_and_filter_candidates(
 
         # Calculate a comparability score for ranking
         score = 0.0
-        if rating_val is not None and rating_val >= 3.5:
+        if rating_val is not None and rating_val >= 3.0:
             score += rating_val * 2.0
         if review_count_val is not None:
-            score += min(10.0, review_count_val / 20.0)
+            score += min(15.0, review_count_val / 20.0)
         if item_address:
             score += 3.0
         if item_website:
@@ -270,6 +296,12 @@ def _rank_and_filter_candidates(
         seen_place_ids.add(place_id)
         seen_names.add(clean_name)
 
+        primary_type = "Local Business"
+        if types:
+            filtered_types = [t for t in types if t not in ("point_of_interest", "establishment", "health", "service")]
+            chosen = filtered_types[0] if filtered_types else types[0]
+            primary_type = chosen.replace("_", " ").title()
+
         candidates.append({
             "place_id": place_id,
             "name": name,
@@ -277,7 +309,7 @@ def _rank_and_filter_candidates(
             "review_count": review_count_val,
             "address": item_address or None,
             "website_url": item_website or None,
-            "category": types[0].replace("_", " ").title() if types else "Local Business",
+            "category": primary_type,
             "score": score,
         })
 
@@ -364,15 +396,17 @@ async def discover_competitors(
     is_blocked: bool = False,
 ) -> CompetitorAnalysisModel:
     """
-    Discovers 3–5 real local competitors using the Google Places API.
+    Discovers 3–5 real local competitors using Google Places API (New).
 
     Guarantees:
     - Gated by deterministic location and category evidence.
-    - Digital / SaaS businesses (e.g. theneuralake.com) cleanly return unavailable with no fake competitors.
+    - Uses ONLY Google Places API (New) (https://places.googleapis.com/v1/places:searchText).
+    - Digital / SaaS businesses cleanly return unavailable with no fake competitors.
     - Dedicated HTTP client isolation.
     - Jittered retry for transient errors.
     - Zero API key exposure.
-    - Never throws unhandled exceptions (fault-isolated).
+    - Safe structured logging without logging keys or headers.
+    - Fault-isolated (never crashes the overall analysis pipeline).
     """
     # 1. Deterministic Location Extraction
     location = extract_deterministic_location(fetch_data, content_analysis)
@@ -382,6 +416,12 @@ async def discover_competitors(
         business_context=business_context,
         location=location,
         is_blocked=is_blocked,
+    )
+
+    logger.info(
+        f"[GooglePlaces] request_id={request_id} target_url={target_url} "
+        f"category={business_context.category if business_context else 'none'} "
+        f"location_detected={bool(location)} eligible={is_eligible}"
     )
 
     if not is_eligible or not search_category or not location:
@@ -412,13 +452,19 @@ async def discover_competitors(
             request_id=request_id,
         )
 
-    # 5. Build Request Parameters
-    # Clean location (take city/region if multi-line)
-    clean_loc = location.split("\n")[0].strip()
-    query_str = f"{search_category} in {clean_loc}"
-    params = {
-        "query": query_str,
-        "key": effective_key.strip(),
+    # 5. Build Places API (New) Request
+    search_locality = extract_search_locality(location)
+    query_str = f"{search_category} in {search_locality}"
+    
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": effective_key.strip(),
+        "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,places.types,places.rating,places.userRatingCount,places.websiteUri",
+    }
+    
+    json_body = {
+        "textQuery": query_str,
+        "maxResultCount": 10,
     }
 
     timeout_sec = getattr(settings, "PLACES_TIMEOUT_SECONDS", 10.0)
@@ -447,16 +493,16 @@ async def discover_competitors(
 
             attempt_start = time.monotonic()
             try:
-                logger.info(f"[GooglePlaces] request_id={request_id} attempt={attempt} query='{query_str}'")
-                response = await client.get(PLACES_TEXT_SEARCH_ENDPOINT, params=params)
+                logger.info(f"[GooglePlaces] request_id={request_id} attempt={attempt} endpoint=places:searchText query='{query_str}'")
+                response = await client.post(PLACES_SEARCH_NEW_ENDPOINT, headers=headers, json=json_body)
                 attempt_elapsed = time.monotonic() - attempt_start
 
                 if response.status_code == 200:
                     data = response.json()
-                    status_str = data.get("status", "OK")
+                    results = data.get("places", [])
 
-                    if status_str in ("ZERO_RESULTS", "NOT_FOUND"):
-                        logger.info(f"[GooglePlaces] request_id={request_id} status={status_str}")
+                    if not results:
+                        logger.info(f"[GooglePlaces] request_id={request_id} zero_results for query='{query_str}'")
                         return CompetitorAnalysisModel(
                             status="inconclusive",
                             search_category=search_category,
@@ -468,40 +514,8 @@ async def discover_competitors(
                             limitations=["Search returned zero matching places."],
                         )
 
-                    if status_str in ("OVER_QUERY_LIMIT", "RESOURCE_EXHAUSTED"):
-                        return _unavailable(
-                            FailureCategory.RATE_LIMITED,
-                            search_cat=search_category,
-                            search_loc=location,
-                            request_id=request_id,
-                        )
-
-                    if status_str in ("REQUEST_DENIED", "INVALID_REQUEST"):
-                        error_msg = data.get("error_message", "")
-                        logger.warning(f"[GooglePlaces] request_id={request_id} status={status_str} error={error_msg}")
-                        category = FailureCategory.AUTHENTICATION_ERROR if "key" in error_msg.lower() else FailureCategory.INVALID_REQUEST
-                        return _unavailable(
-                            category,
-                            search_cat=search_category,
-                            search_loc=location,
-                            request_id=request_id,
-                        )
-
-                    results = data.get("results", [])
-                    if not results:
-                        return CompetitorAnalysisModel(
-                            status="inconclusive",
-                            search_category=search_category,
-                            search_location=location,
-                            competitors=[],
-                            strengths=[],
-                            opportunities=[],
-                            reason="No sufficiently comparable local competitors were found.",
-                            limitations=["Google Places returned no results."],
-                        )
-
                     # Filter and rank candidates
-                    competitors = _rank_and_filter_candidates(
+                    competitors = _rank_and_filter_candidates_new_api(
                         places_results=results,
                         target_url=target_url,
                         target_name=business_name,
@@ -538,6 +552,7 @@ async def discover_competitors(
                     return analysis_model
 
                 elif response.status_code in (401, 403):
+                    logger.warning(f"[GooglePlaces] request_id={request_id} auth_error status={response.status_code}")
                     return _unavailable(
                         FailureCategory.AUTHENTICATION_ERROR,
                         search_cat=search_category,
@@ -570,6 +585,7 @@ async def discover_competitors(
                     )
 
                 else:
+                    logger.warning(f"[GooglePlaces] request_id={request_id} unexpected status={response.status_code}")
                     return _unavailable(
                         FailureCategory.UNKNOWN_ERROR,
                         search_cat=search_category,

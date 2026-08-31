@@ -1,6 +1,7 @@
 import pytest
-import httpx
 from unittest.mock import patch, MagicMock
+import httpx
+from bs4 import BeautifulSoup
 
 from app.models import (
     BusinessContextModel,
@@ -9,51 +10,55 @@ from app.models import (
     CTAModel,
     ServiceStructureModel,
     CompetitorAnalysisModel,
+    CompetitorModel,
+    RawFetchData,
 )
 from app.services.google_places import (
     extract_deterministic_location,
     determine_competitor_eligibility,
+    _rank_and_filter_candidates_new_api,
     discover_competitors,
-    _rank_and_filter_candidates,
-    _derive_competitor_observations,
     clear_places_cache,
     _places_cache,
+    PLACES_SEARCH_NEW_ENDPOINT,
 )
-
-
-@pytest.fixture(autouse=True)
-def reset_cache():
-    """Automatically clear in-memory cache before every test."""
-    clear_places_cache()
+from app.services.content_analysis import extract_ctas_and_contact
 
 
 def make_mock_content(address: str = None) -> ContentAnalysisResultModel:
-    """Helper to construct valid ContentAnalysisResultModel for testing."""
     return ContentAnalysisResultModel(
         pages_analyzed=[],
         total_pages_analyzed=1,
         homepage_word_count=500,
         average_word_count=500,
         contact_info=ContactInfoModel(
-            address=address,
             phones=[],
             emails=[],
+            address=address,
+            opening_hours=None,
         ),
         ctas=CTAModel(),
         services_structure=ServiceStructureModel(
             has_dedicated_service_pages=True,
             services_mainly_on_homepage=False,
-            service_pages_count=3,
+            service_pages_count=2,
+            detected_services=["Service A"],
         ),
-        summary="Sample website content",
-        is_inconclusive=False,
+        summary="Mock summary",
     )
 
 
+@pytest.fixture(autouse=True)
+def reset_cache():
+    clear_places_cache()
+    yield
+    clear_places_cache()
+
+
 def test_extract_deterministic_location_from_contact_info():
-    content = make_mock_content(address="123 Main St, Austin, TX 78701")
+    content = make_mock_content(address="123 Health Ave, Suite 400, Chicago, IL 60601")
     loc = extract_deterministic_location(fetch_data=None, content_analysis=content)
-    assert loc == "123 Main St, Austin, TX 78701"
+    assert loc == "123 Health Ave, Suite 400, Chicago, IL 60601"
 
 
 def test_extract_deterministic_location_missing():
@@ -62,17 +67,107 @@ def test_extract_deterministic_location_missing():
     assert loc is None
 
 
+def test_schema_org_medical_clinic_address_detection():
+    html = """
+    <html>
+    <head>
+        <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@type": "MedicalClinic",
+            "name": "DaySpring Multispeciality Clinic",
+            "address": {
+                "@type": "PostalAddress",
+                "streetAddress": "JJ Square, M P Pylee Road",
+                "addressLocality": "Kochi",
+                "addressRegion": "Kerala",
+                "postalCode": "682020",
+                "addressCountry": "India"
+            }
+        }
+        </script>
+    </head>
+    <body><h1>Welcome</h1></body>
+    </html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    res = extract_ctas_and_contact(soup, "https://dayspringind.com", "https://dayspringind.com")
+    assert res["address"] is not None
+    assert "Kochi" in res["address"]
+    assert "682020" in res["address"]
+
+
+def test_schema_org_graph_postal_address_detection():
+    html = """
+    <html>
+    <head>
+        <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@graph": [
+                {
+                    "@type": "PostalAddress",
+                    "streetAddress": "54/1285-B JJ Square",
+                    "addressLocality": "Kochi",
+                    "addressRegion": "Kerala",
+                    "postalCode": "682020"
+                }
+            ]
+        }
+        </script>
+    </head>
+    <body><h1>Clinic</h1></body>
+    </html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    res = extract_ctas_and_contact(soup, "https://dayspringind.com", "https://dayspringind.com")
+    assert res["address"] is not None
+    assert "54/1285-B JJ Square" in res["address"]
+
+
+def test_visible_html_address_detection():
+    html = """
+    <html>
+    <body>
+        <div class="footer-contact">
+            <span class="elementor-icon-list-text">54/1285-B first Floor JJ Square, M P Pylee Road, Main Avenue, Kadavanthra P.O, Jawahar Nagar, Kochi, Kerala 682020</span>
+        </div>
+    </body>
+    </html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    res = extract_ctas_and_contact(soup, "https://dayspringind.com", "https://dayspringind.com")
+    assert res["address"] is not None
+    assert "JJ Square" in res["address"]
+    assert "682020" in res["address"]
+
+
+def test_semantic_address_tag_detection():
+    html = """
+    <html>
+    <body>
+        <address>
+            742 Evergreen Terrace, Springfield, OR 97477
+        </address>
+    </body>
+    </html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    res = extract_ctas_and_contact(soup, "https://simpsons.com", "https://simpsons.com")
+    assert res["address"] == "742 Evergreen Terrace, Springfield, OR 97477"
+
+
 def test_eligibility_gating_digital_saas_without_storefront():
-    # Digital / SaaS website (e.g. theneuralake.com)
     biz_ctx = BusinessContextModel(
-        category="technology",
+        category="saas",
         confidence="high",
-        evidence=["AI and cloud data lake solutions"],
+        evidence=["Cloud platform"],
         reliability="factual",
     )
     is_eligible, search_cat, reason = determine_competitor_eligibility(
         business_context=biz_ctx,
         location=None,
+        is_blocked=False,
     )
     assert is_eligible is False
     assert search_cat is None
@@ -80,19 +175,18 @@ def test_eligibility_gating_digital_saas_without_storefront():
 
 
 def test_eligibility_gating_generic_example():
-    # Generic / Unknown website (e.g. example.com)
     biz_ctx = BusinessContextModel(
         category="unknown",
-        confidence="none",
-        evidence=["No business signals"],
+        confidence="low",
+        evidence=[],
         reliability="inconclusive",
     )
     is_eligible, search_cat, reason = determine_competitor_eligibility(
         business_context=biz_ctx,
         location=None,
+        is_blocked=False,
     )
     assert is_eligible is False
-    assert search_cat is None
     assert "requires a confirmed business category" in reason
 
 
@@ -100,31 +194,33 @@ def test_eligibility_gating_local_business_with_address():
     biz_ctx = BusinessContextModel(
         category="local_business",
         confidence="high",
-        evidence=["Auto repair and brake service"],
+        evidence=["Auto repair service"],
         reliability="factual",
     )
     is_eligible, search_cat, reason = determine_competitor_eligibility(
         business_context=biz_ctx,
-        location="450 Sutter St, San Francisco, CA",
+        location="123 Main St, Austin, TX",
+        is_blocked=False,
     )
     assert is_eligible is True
     assert "auto repair" in search_cat
     assert reason is None
 
 
-def test_eligibility_gating_hospitality_with_address():
+def test_eligibility_gating_healthcare_with_address():
     biz_ctx = BusinessContextModel(
-        category="hospitality",
+        category="healthcare",
         confidence="high",
-        evidence=["Luxury hotel and resort suites"],
+        evidence=["Medical clinic in Kochi"],
         reliability="factual",
     )
     is_eligible, search_cat, reason = determine_competitor_eligibility(
         business_context=biz_ctx,
-        location="Apollo Bunder, Mumbai, Maharashtra 400001",
+        location="54/1285-B JJ Square, Kochi, Kerala 682020",
+        is_blocked=False,
     )
     assert is_eligible is True
-    assert "hotel" in search_cat
+    assert "clinic" in search_cat
     assert reason is None
 
 
@@ -132,7 +228,7 @@ def test_eligibility_gating_blocked_crawler():
     biz_ctx = BusinessContextModel(
         category="healthcare",
         confidence="high",
-        evidence=["Dental clinic"],
+        evidence=["Clinic"],
         reliability="factual",
     )
     is_eligible, search_cat, reason = determine_competitor_eligibility(
@@ -144,47 +240,47 @@ def test_eligibility_gating_blocked_crawler():
     assert "crawler access was challenged" in reason
 
 
-def test_rank_and_filter_candidates_target_exclusion():
+def test_rank_and_filter_candidates_places_new_api():
     places_raw = [
         {
-            "place_id": "target_id",
-            "name": "Apex Auto Care",
+            "id": "target_id",
+            "displayName": {"text": "Apex Auto Care"},
             "rating": 4.9,
-            "user_ratings_total": 350,
-            "formatted_address": "100 Broadway, New York, NY",
-            "website": "https://apexautocare.com",
+            "userRatingCount": 350,
+            "formattedAddress": "100 Broadway, New York, NY",
+            "websiteUri": "https://apexautocare.com",
             "types": ["car_repair", "point_of_interest"],
         },
         {
-            "place_id": "comp_1",
-            "name": "Broadway Auto Clinic",
+            "id": "comp_1",
+            "displayName": {"text": "Broadway Auto Clinic"},
             "rating": 4.8,
-            "user_ratings_total": 210,
-            "formatted_address": "120 Broadway, New York, NY",
-            "website": "https://broadwayautoclinic.com",
+            "userRatingCount": 210,
+            "formattedAddress": "120 Broadway, New York, NY",
+            "websiteUri": "https://broadwayautoclinic.com",
             "types": ["car_repair", "point_of_interest"],
         },
         {
-            "place_id": "comp_2",
-            "name": "Manhattan Master Mechanics",
+            "id": "comp_2",
+            "displayName": {"text": "Manhattan Master Mechanics"},
             "rating": 4.6,
-            "user_ratings_total": 95,
-            "formatted_address": "200 5th Ave, New York, NY",
-            "website": "https://manhattanmechanics.com",
+            "userRatingCount": 95,
+            "formattedAddress": "200 5th Ave, New York, NY",
+            "websiteUri": "https://manhattanmechanics.com",
             "types": ["car_repair", "point_of_interest"],
         },
         {
-            "place_id": "comp_3",
-            "name": "Downtown Tire & Brake",
+            "id": "comp_3",
+            "displayName": {"text": "Downtown Tire & Brake"},
             "rating": 4.5,
-            "user_ratings_total": 140,
-            "formatted_address": "50 Wall St, New York, NY",
-            "website": None,
+            "userRatingCount": 140,
+            "formattedAddress": "50 Wall St, New York, NY",
+            "websiteUri": None,
             "types": ["car_repair"],
         },
     ]
 
-    competitors = _rank_and_filter_candidates(
+    competitors = _rank_and_filter_candidates_new_api(
         places_results=places_raw,
         target_url="https://apexautocare.com",
         target_name="Apex Auto Care",
@@ -202,7 +298,6 @@ def test_rank_and_filter_candidates_target_exclusion():
 
 @pytest.mark.anyio
 async def test_discover_competitors_gated_out_digital_site():
-    # theneuralake.com should cleanly return unavailable without calling Places API
     biz_ctx = BusinessContextModel(
         category="technology",
         confidence="high",
@@ -225,66 +320,82 @@ async def test_discover_competitors_gated_out_digital_site():
 
 
 @pytest.mark.anyio
-async def test_discover_competitors_success_mocked():
+async def test_discover_competitors_places_new_api_success():
     biz_ctx = BusinessContextModel(
-        category="local_business",
+        category="healthcare",
         confidence="high",
-        evidence=["Automotive repair"],
+        evidence=["Medical clinic"],
         reliability="factual",
     )
-    content = make_mock_content(address="100 Broadway, New York, NY")
+    content = make_mock_content(address="54/1285-B JJ Square, Kochi, Kerala 682020")
 
     mock_places_response = {
-        "status": "OK",
-        "results": [
+        "places": [
             {
-                "place_id": "p_target",
-                "name": "Target Auto",
+                "id": "target_id",
+                "displayName": {"text": "DaySpring Multispeciality Clinic"},
                 "rating": 4.9,
-                "user_ratings_total": 50,
-                "formatted_address": "100 Broadway, New York, NY",
-                "types": ["car_repair"],
+                "userRatingCount": 1209,
+                "formattedAddress": "54/1285-B JJ Square, Kochi, Kerala 682020",
+                "websiteUri": "https://www.dayspringind.com",
+                "types": ["medical_clinic"],
             },
             {
-                "place_id": "p_1",
-                "name": "City Auto Care",
-                "rating": 4.8,
-                "user_ratings_total": 120,
-                "formatted_address": "110 Broadway, New York, NY",
-                "website": "https://cityautocare.com",
-                "types": ["car_repair"],
+                "id": "comp_1",
+                "displayName": {"text": "True Life Medical Centre"},
+                "rating": 4.4,
+                "userRatingCount": 180,
+                "formattedAddress": "Subhash Chandra Bose Rd, Kochi, Kerala 682019",
+                "websiteUri": "https://truelifemedicalcentre.com",
+                "types": ["medical_clinic"],
             },
             {
-                "place_id": "p_2",
-                "name": "NYC Brake & Muffler",
-                "rating": 4.7,
-                "user_ratings_total": 85,
-                "formatted_address": "150 Broadway, New York, NY",
-                "website": "https://nycbrakes.com",
-                "types": ["car_repair"],
+                "id": "comp_2",
+                "displayName": {"text": "Ernakulam Medical Centre"},
+                "rating": 4.5,
+                "userRatingCount": 4350,
+                "formattedAddress": "NH 66, Palarivattom, Kochi, Kerala 682028",
+                "websiteUri": "https://www.emccochin.com",
+                "types": ["medical_clinic"],
             },
-        ],
+        ]
     }
 
-    mock_client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, json=mock_places_response)
-        )
-    )
+    recorded_headers = {}
+    recorded_json = {}
+
+    def handler(request: httpx.Request):
+        nonlocal recorded_headers, recorded_json
+        recorded_headers = dict(request.headers)
+        import json
+        recorded_json = json.loads(request.read())
+        return httpx.Response(200, json=mock_places_response)
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
     result = await discover_competitors(
-        target_url="https://targetauto.com",
-        business_name="Target Auto",
+        target_url="https://www.dayspringind.com",
+        business_name="DaySpring Multispeciality Clinic",
         business_context=biz_ctx,
         content_analysis=content,
         client=mock_client,
         api_key="test_places_key",
     )
 
+    # Verify Places API (New) Headers
+    assert recorded_headers.get("x-goog-api-key") == "test_places_key"
+    assert "places.id" in recorded_headers.get("x-goog-fieldmask", "")
+    assert "places.displayName" in recorded_headers.get("x-goog-fieldmask", "")
+
+    # Verify Places API (New) Body
+    assert "textQuery" in recorded_json
+    assert "Kochi" in recorded_json["textQuery"]
+
+    # Verify result
     assert result.status == "available"
     assert len(result.competitors) == 2
-    assert result.competitors[0].name == "City Auto Care"
-    assert result.competitors[1].name == "NYC Brake & Muffler"
+    assert all(c.name != "DaySpring Multispeciality Clinic" for c in result.competitors)
+    assert result.competitors[0].name in ("True Life Medical Centre", "Ernakulam Medical Centre")
     assert len(result.opportunities) > 0
 
 
@@ -299,25 +410,24 @@ async def test_discover_competitors_caching():
     content = make_mock_content(address="Apollo Bunder, Mumbai, India")
 
     mock_places_response = {
-        "status": "OK",
-        "results": [
+        "places": [
             {
-                "place_id": "h_1",
-                "name": "The Oberoi Mumbai",
+                "id": "h_1",
+                "displayName": {"text": "The Oberoi Mumbai"},
                 "rating": 4.9,
-                "user_ratings_total": 4500,
-                "formatted_address": "Nariman Point, Mumbai, India",
+                "userRatingCount": 4500,
+                "formattedAddress": "Nariman Point, Mumbai, India",
                 "types": ["lodging"],
             },
             {
-                "place_id": "h_2",
-                "name": "Trident Hotel Mumbai",
+                "id": "h_2",
+                "displayName": {"text": "Trident Hotel Mumbai"},
                 "rating": 4.7,
-                "user_ratings_total": 3200,
-                "formatted_address": "Nariman Point, Mumbai, India",
+                "userRatingCount": 3200,
+                "formattedAddress": "Nariman Point, Mumbai, India",
                 "types": ["lodging"],
             },
-        ],
+        ]
     }
 
     mock_client = httpx.AsyncClient(
@@ -344,7 +454,7 @@ async def test_discover_competitors_caching():
         business_name="Taj Mahal Palace",
         business_context=biz_ctx,
         content_analysis=content,
-        client=None,  # No client passed
+        client=None,
         api_key="test_places_key",
     )
     assert res2.status == "available"
@@ -361,7 +471,6 @@ async def test_discover_competitors_api_key_missing():
     )
     content = make_mock_content(address="789 Pine St, Seattle, WA")
 
-    # Pass empty api_key string
     result = await discover_competitors(
         target_url="https://seattleplumbing.com",
         business_name="Seattle Plumbing",

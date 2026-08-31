@@ -324,7 +324,20 @@ def extract_ctas_and_contact(soup: BeautifulSoup, page_url: str, base_url: str) 
                     if em and "@" in em and em not in emails:
                         emails.append(em)
 
-                # Check address
+                # Direct PostalAddress node
+                if node.get("@type") == "PostalAddress" and not detected_address:
+                    parts = [
+                        node.get("streetAddress"),
+                        node.get("addressLocality"),
+                        node.get("addressRegion"),
+                        node.get("postalCode"),
+                        node.get("addressCountry"),
+                    ]
+                    valid_parts = [str(p).strip() for p in parts if p and str(p).strip()]
+                    if len(valid_parts) >= 2:
+                        detected_address = ", ".join(valid_parts)
+
+                # Check address property
                 if "address" in node and not detected_address:
                     addr = node["address"]
                     if isinstance(addr, dict):
@@ -338,8 +351,12 @@ def extract_ctas_and_contact(soup: BeautifulSoup, page_url: str, base_url: str) 
                         valid_parts = [str(p).strip() for p in parts if p and str(p).strip()]
                         if valid_parts:
                             detected_address = ", ".join(valid_parts)
-                    elif isinstance(addr, str) and len(addr.strip()) > 5:
+                    elif isinstance(addr, str) and len(addr.strip()) > 8:
                         detected_address = addr.strip()
+
+                # Check location property
+                if "location" in node and isinstance(node["location"], dict) and not detected_address:
+                    parse_schema_node(node["location"])
 
                 # Check opening hours
                 if "openingHours" in node:
@@ -374,9 +391,56 @@ def extract_ctas_and_contact(soup: BeautifulSoup, page_url: str, base_url: str) 
         address_elem = soup.find("address")
         if address_elem:
             addr_text = address_elem.get_text(separator=" ", strip=True)
-            # Basic validation that it contains street/number or city characteristics
             if len(addr_text) >= 10 and any(char.isdigit() for char in addr_text):
                 detected_address = " ".join(addr_text.split())
+
+    # 4. Microdata itemprop="address" or itemprop="streetAddress"
+    if not detected_address:
+        itemprop_addr = soup.find(attrs={"itemprop": lambda x: x and "address" in str(x).lower()})
+        if itemprop_addr:
+            txt = itemprop_addr.get_text(separator=" ", strip=True)
+            if len(txt) >= 10 and any(char.isdigit() for char in txt):
+                detected_address = " ".join(txt.split())
+
+    # 5. Deterministic Visible HTML Address Recognition
+    if not detected_address:
+        ADDRESS_KEYWORDS = [
+            "road", "street", "avenue", "lane", "drive", "blvd", "boulevard", "highway",
+            "floor", "suite", "building", "tower", "plaza", "complex", "square", "block",
+            "nagar", "colony", "junction", "cross", "sector", "po", "p.o", "pin", "pincode",
+            "postal code", "zip", "kerala", "kochi", "cochin", "ernakulam", "mumbai", "delhi",
+            "bangalore", "bengaluru", "chennai", "hyderabad", "california", "new york", "texas",
+            "london", "dubai", "singapore"
+        ]
+        POSTAL_REGEX = re.compile(
+            r"(?:\b\d{5,6}\b|\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b|\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b)",
+            re.I
+        )
+
+        candidate_containers = soup.find_all(
+            ["span", "p", "div", "li"],
+            class_=lambda c: c and any(k in str(c).lower() for k in [
+                "address", "location", "contact", "elementor-icon-list-text", "footer", "clinic-info"
+            ])
+        )
+
+        for el in candidate_containers:
+            txt = el.get_text(separator=" ", strip=True)
+            clean_txt = " ".join(txt.split())
+            if not (15 <= len(clean_txt) <= 250):
+                continue
+            if "@" in clean_txt or clean_txt.lower().startswith("tel:") or clean_txt.lower().startswith("call"):
+                continue
+
+            lower_txt = clean_txt.lower()
+            keyword_hits = sum(1 for kw in ADDRESS_KEYWORDS if re.search(rf"\b{re.escape(kw)}\b", lower_txt))
+            has_number = bool(re.search(r"\d+", clean_txt))
+            has_comma = "," in clean_txt
+            has_postal = bool(POSTAL_REGEX.search(clean_txt))
+
+            if (keyword_hits >= 2 and has_number) or (keyword_hits >= 1 and has_postal) or (has_postal and has_comma and has_number):
+                detected_address = clean_txt
+                break
 
     return {
         "phones": phones,
