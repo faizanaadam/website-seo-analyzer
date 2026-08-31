@@ -198,6 +198,30 @@ class AIAnalysisResultModel(BaseModel):
     reason: Optional[str] = None
 
 
+class CompetitorModel(BaseModel):
+    place_id: str
+    name: str
+    rating: Optional[float] = None
+    review_count: Optional[int] = None
+    address: Optional[str] = None
+    distance_km: Optional[float] = None
+    website_url: Optional[str] = None
+    category: Optional[str] = None
+    source: str = "google_places"
+    highlight: Optional[str] = None
+
+
+class CompetitorAnalysisModel(BaseModel):
+    status: str  # "available" | "unavailable" | "inconclusive" | "partial"
+    search_category: Optional[str] = None
+    search_location: Optional[str] = None
+    competitors: List[CompetitorModel] = Field(default_factory=list)
+    strengths: List[str] = Field(default_factory=list)
+    opportunities: List[str] = Field(default_factory=list)
+    reason: Optional[str] = None
+    limitations: List[str] = Field(default_factory=list)
+
+
 class AnalysisResponse(BaseModel):
     status: str
     message: str
@@ -207,6 +231,7 @@ class AnalysisResponse(BaseModel):
     content_analysis: Optional[ContentAnalysisResultModel] = None
     context_intelligence: Optional[ContextIntelligenceResultModel] = None
     pagespeed: Optional[PageSpeedResultModel] = None
+    competitors: Optional[CompetitorAnalysisModel] = None
     ai_insights: Optional[AIAnalysisResultModel] = None
     error: Optional[str] = None
 

@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     PAGESPEED_MAX_RETRIES: int = 2
     PAGESPEED_DEADLINE_SECONDS: float = 60.0
     PAGESPEED_CACHE_TTL_SECONDS: int = 600
+    PLACES_TIMEOUT_SECONDS: float = 10.0
+    PLACES_MAX_RETRIES: int = 2
+    PLACES_DEADLINE_SECONDS: float = 15.0
+    PLACES_CACHE_TTL_SECONDS: int = 900
 
     @property
     def openai_key(self) -> Optional[str]:
@@ -46,6 +50,10 @@ class Settings(BaseSettings):
     @property
     def pagespeed_key(self) -> Optional[str]:
         return self.PAGESPEED_API_KEY or self.GOOGLE_PAGESPEED_API_KEY
+
+    @property
+    def places_key(self) -> Optional[str]:
+        return self.GOOGLE_PLACES_API_KEY
 
     model_config = SettingsConfigDict(
         env_file=(str(_ENV_FILE), str(_ROOT_ENV_FILE), ".env"),

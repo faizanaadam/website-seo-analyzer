@@ -14,6 +14,7 @@ from app.models import (
     TechnicalSEOResultModel,
     ContentAnalysisResultModel,
     PageSpeedResultModel,
+    CompetitorAnalysisModel,
     AIAnalysisResultModel,
 )
 from app.services.fetcher import fetch_website, DEFAULT_HEADERS
@@ -88,6 +89,10 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
                 metrics=None,
                 reason="Target website could not be fetched.",
             ),
+            competitors=CompetitorAnalysisModel(
+                status="unavailable",
+                reason="Target website could not be fetched.",
+            ),
             ai_insights=AIAnalysisResultModel(
                 status="unavailable",
                 reason="Target website could not be reached for analysis.",
@@ -146,7 +151,41 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
             content_analysis=final_content,
         )
 
-        # 4. Generate AI insights from deterministic facts
+        # 4. Discover Local Competitors via Google Places (Gated & Fault-Isolated)
+        from app.services.google_places import discover_competitors
+        from app.utils.url_helpers import extract_domain
+        places_start = time.monotonic()
+        try:
+            domain_name = extract_domain(result.final_url)
+            business_name = (
+                (raw_fetch.parsed_data.title.split("|")[0].split("-")[0].strip() if raw_fetch.parsed_data and raw_fetch.parsed_data.title else None)
+                or domain_name
+            )
+            is_blocked = (
+                not getattr(result, "content_accessible", True)
+                or result.error_type == "bot_protection_detected"
+                or (result.status_code in (403, 429))
+            )
+            competitors_res = await discover_competitors(
+                target_url=result.final_url,
+                business_name=business_name,
+                business_context=context_intel.business_context if context_intel else None,
+                fetch_data=raw_fetch,
+                content_analysis=final_content,
+                request_id=request_id,
+                is_blocked=is_blocked,
+            )
+        except Exception as places_err:
+            logger.warning(f"[Pipeline] request_id={request_id} Google Places unexpected error: {places_err}")
+            competitors_res = CompetitorAnalysisModel(
+                status="unavailable",
+                reason="Local competitor data could not be retrieved at this time.",
+                limitations=["Google Places service encountered an unexpected error."],
+            )
+        places_duration = time.monotonic() - places_start
+        logger.info(f"[Pipeline] request_id={request_id} Google Places completed in {places_duration:.2f}s (status={competitors_res.status})")
+
+        # 5. Generate AI insights from deterministic facts
         ai_start = time.monotonic()
         try:
             # We explicitly do NOT pass `client=client` to force ai_insights to use its own client
@@ -156,6 +195,7 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
                 pagespeed=final_pagespeed,
                 fetch_data=raw_fetch,
                 context_intelligence=context_intel,
+                competitors=competitors_res,
                 request_id=request_id,
             )
         except Exception as ai_err:
@@ -172,13 +212,14 @@ async def analyse_site(request: AnalysisRequest) -> AnalysisResponse:
 
     return AnalysisResponse(
         status="success",
-        message="Website fetched, technical SEO, content, context intelligence, PageSpeed, and AI insights completed successfully.",
+        message="Website fetched, technical SEO, content, context intelligence, PageSpeed, Google Places, and AI insights completed successfully.",
         target_url=result.final_url,
         fetch_data=raw_fetch,
         technical_seo=tech_model,
         content_analysis=final_content,
         context_intelligence=context_intel,
         pagespeed=final_pagespeed,
+        competitors=competitors_res,
         ai_insights=ai_insights,
     )
 

@@ -422,57 +422,114 @@ export const ResultsState: React.FC<ResultsStateProps> = ({ data, onReset }) => 
           </View>
         </View>
 
-        {/* 8. Competitor Section */}
+        {/* 8. Google Places Competitor Intelligence Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>📍 Local Competitor Comparison</Text>
+            <Text style={styles.sectionTitle}>📍 Local Competitor Intelligence</Text>
             <Text style={styles.sectionSubtitle}>
-              Benchmarking against nearby businesses in the same category.
+              Evidence-based competitor comparison powered by Google Places.
             </Text>
           </View>
 
           <View style={styles.competitorCard}>
-            {/* Disclaimer pill */}
-            <View style={styles.disclaimerBadge}>
-              <Text style={styles.disclaimerText}>ℹ {data.competitors.disclaimer}</Text>
-            </View>
-
-            {/* Competitor Items */}
-            <View style={styles.competitorList}>
-              {data.competitors.items.map((comp, i) => (
-                <View key={i} style={styles.competitorRow}>
-                  <View style={styles.compTop}>
-                    <Text style={styles.compName}>{comp.name}</Text>
-                    <View style={styles.ratingBadge}>
-                      <Text style={styles.ratingStar}>★</Text>
-                      <Text style={styles.ratingNumber}>
-                        {comp.rating} ({comp.reviewCount})
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={styles.compHighlight}>{comp.highlight}</Text>
+            {data.competitors.status === 'available' && data.competitors.items.length > 0 ? (
+              <>
+                {/* Verified Query Badge */}
+                <View style={styles.placesSourceBadge}>
+                  <Text style={styles.placesSourceText}>
+                    ✓ Google Places Verified: {data.competitors.searchCategory || 'Local Business'} in {data.competitors.searchLocation || 'Local Area'}
+                  </Text>
                 </View>
-              ))}
-            </View>
 
-            <View style={styles.contentDivider} />
+                {/* Competitor Items List */}
+                <View style={styles.competitorList}>
+                  {data.competitors.items.map((comp, i) => (
+                    <View key={comp.place_id || i} style={styles.competitorRow}>
+                      <View style={styles.compTop}>
+                        <Text style={styles.compName}>{comp.name}</Text>
+                        {comp.rating ? (
+                          <View style={styles.ratingBadge}>
+                            <Text style={styles.ratingStar}>★</Text>
+                            <Text style={styles.ratingNumber}>
+                              {comp.rating} {comp.reviewCount ? `(${comp.reviewCount})` : ''}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
 
-            {/* Strengths & Opportunities */}
-            <View style={styles.insightBox}>
-              <Text style={styles.insightTitle}>YOUR STRENGTHS</Text>
-              {data.competitors.strengths.map((str, i) => (
-                <Text key={i} style={styles.insightItem}>
-                  ✓ {str}
+                      {comp.category ? (
+                        <View style={styles.compCategoryBadge}>
+                          <Text style={styles.compCategoryText}>{comp.category}</Text>
+                        </View>
+                      ) : null}
+
+                      {comp.address ? (
+                        <View style={styles.compDetailRow}>
+                          <Text style={styles.compDetailIcon}>📍</Text>
+                          <Text style={styles.compDetailText} numberOfLines={1}>{comp.address}</Text>
+                        </View>
+                      ) : null}
+
+                      {comp.website_url ? (
+                        <View style={styles.compDetailRow}>
+                          <Text style={styles.compDetailIcon}>🌐</Text>
+                          <Text style={styles.compWebsiteText} numberOfLines={1}>{comp.website_url}</Text>
+                        </View>
+                      ) : null}
+
+                      <Text style={styles.compHighlight}>{comp.highlight}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                <View style={styles.contentDivider} />
+
+                {/* Strengths & Opportunities */}
+                <View style={styles.insightBox}>
+                  {data.competitors.strengths.length > 0 ? (
+                    <>
+                      <Text style={styles.insightTitle}>YOUR STRENGTHS</Text>
+                      {data.competitors.strengths.map((str, i) => (
+                        <Text key={i} style={styles.insightItem}>
+                          ✓ {str}
+                        </Text>
+                      ))}
+                    </>
+                  ) : null}
+
+                  {data.competitors.opportunities.length > 0 ? (
+                    <>
+                      <Text style={[styles.insightTitle, { marginTop: data.competitors.strengths.length > 0 ? 12 : 0 }]}>
+                        OPPORTUNITIES
+                      </Text>
+                      {data.competitors.opportunities.map((opp, i) => (
+                        <Text key={i} style={styles.insightItem}>
+                          ▲ {opp}
+                        </Text>
+                      ))}
+                    </>
+                  ) : null}
+                </View>
+              </>
+            ) : (
+              <View style={styles.compUnavailableBox}>
+                <Text style={styles.compUnavailableTitle}>Local Competitor Analysis Unavailable</Text>
+                <Text style={styles.compUnavailableText}>
+                  {data.competitors.reason || 'Local competitor benchmarking requires verified physical business location signals on the website.'}
                 </Text>
-              ))}
 
-              <Text style={[styles.insightTitle, { marginTop: 12 }]}>OPPORTUNITIES</Text>
-              {data.competitors.opportunities.map((opp, i) => (
-                <Text key={i} style={styles.insightItem}>
-                  ▲ {opp}
-                </Text>
-              ))}
-            </View>
+                {data.competitors.opportunities.length > 0 ? (
+                  <View style={[styles.insightBox, { marginTop: 12 }]}>
+                    <Text style={styles.insightTitle}>RECOMMENDED VISIBILITY ACTIONS</Text>
+                    {data.competitors.opportunities.map((opp, i) => (
+                      <Text key={i} style={styles.insightItem}>
+                        ▲ {opp}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            )}
           </View>
         </View>
 
@@ -1198,26 +1255,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: THEME.colors.border,
   },
-  disclaimerBadge: {
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+  placesSourceBadge: {
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 6,
     marginBottom: 12,
-    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
   },
-  disclaimerText: {
+  placesSourceText: {
     fontSize: 11,
     color: THEME.colors.primaryLight,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   competitorList: {
-    gap: 8,
+    gap: 10,
   },
   competitorRow: {
-    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
     borderRadius: THEME.borderRadius.sm,
-    padding: 10,
+    padding: 12,
     borderWidth: 1,
     borderColor: THEME.colors.border,
   },
@@ -1228,13 +1286,19 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   compName: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
     color: THEME.colors.textPrimary,
+    flex: 1,
+    marginRight: 8,
   },
   ratingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
     gap: 3,
   },
   ratingStar: {
@@ -1244,12 +1308,68 @@ const styles = StyleSheet.create({
   ratingNumber: {
     fontSize: 12,
     fontWeight: '700',
-    color: THEME.colors.textPrimary,
+    color: '#F59E0B',
+  },
+  compCategoryBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: THEME.colors.surfaceLight,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginBottom: 6,
+  },
+  compCategoryText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  compDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  compDetailIcon: {
+    fontSize: 11,
+  },
+  compDetailText: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    flex: 1,
+  },
+  compWebsiteText: {
+    fontSize: 12,
+    color: THEME.colors.primaryLight,
+    flex: 1,
   },
   compHighlight: {
     fontSize: 12,
     color: THEME.colors.textSecondary,
     lineHeight: 16,
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    paddingTop: 4,
+  },
+  compUnavailableBox: {
+    backgroundColor: 'rgba(15, 23, 42, 0.3)',
+    borderRadius: THEME.borderRadius.sm,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+  },
+  compUnavailableTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: THEME.colors.textPrimary,
+    marginBottom: 4,
+  },
+  compUnavailableText: {
+    fontSize: 12,
+    color: THEME.colors.textSecondary,
+    lineHeight: 18,
   },
   insightBox: {
     backgroundColor: 'rgba(15, 23, 42, 0.4)',

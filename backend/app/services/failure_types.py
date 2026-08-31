@@ -59,6 +59,23 @@ PAGESPEED_USER_MESSAGES = {
     FailureCategory.UNKNOWN_ERROR: "Google PageSpeed is temporarily unavailable.",
 }
 
+PLACES_USER_MESSAGES = {
+    FailureCategory.CONFIGURATION_ERROR: "Google Places API key is not configured.",
+    FailureCategory.AUTHENTICATION_ERROR: "Google Places API key is invalid or lacks required permissions.",
+    FailureCategory.INVALID_REQUEST: "Google Places API returned a bad request error.",
+    FailureCategory.CONNECT_TIMEOUT: "Could not connect to the Google Places service within the allowed time.",
+    FailureCategory.READ_TIMEOUT: "Google Places did not return competitor data within the allowed time.",
+    FailureCategory.POOL_TIMEOUT: "Google Places did not return competitor data within the allowed time.",
+    FailureCategory.NETWORK_ERROR: "Could not reach the Google Places service due to a network issue.",
+    FailureCategory.RATE_LIMITED: "Google Places API quota or rate limit was reached.",
+    FailureCategory.SERVER_ERROR: "Google Places service encountered a temporary error.",
+    FailureCategory.UPSTREAM_UNAVAILABLE: "Google Places service could not retrieve competitor data at this time.",
+    FailureCategory.MALFORMED_RESPONSE: "Google Places returned an unexpected response format.",
+    FailureCategory.VALIDATION_ERROR: "Google Places response did not match the expected format.",
+    FailureCategory.DEADLINE_EXCEEDED: "Google Places competitor discovery exceeded the time budget.",
+    FailureCategory.UNKNOWN_ERROR: "Local competitor data could not be retrieved at this time.",
+}
+
 
 def get_user_message(service: str, category: str) -> str:
     """Returns the safe user-facing message for a given service and failure category."""
@@ -66,4 +83,6 @@ def get_user_message(service: str, category: str) -> str:
         return OPENAI_USER_MESSAGES.get(category, OPENAI_USER_MESSAGES[FailureCategory.UNKNOWN_ERROR])
     elif service == "pagespeed":
         return PAGESPEED_USER_MESSAGES.get(category, PAGESPEED_USER_MESSAGES[FailureCategory.UNKNOWN_ERROR])
+    elif service == "places":
+        return PLACES_USER_MESSAGES.get(category, PLACES_USER_MESSAGES[FailureCategory.UNKNOWN_ERROR])
     return "Service temporarily unavailable."

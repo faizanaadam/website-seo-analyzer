@@ -61,6 +61,7 @@ def generate_strategic_projects(
     has_local_evidence: bool,
     services_structure: Optional[ServiceStructureModel] = None,
     is_blocked: bool = False,
+    competitors: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
     """
     Generates tailored, context-aware strategic long-term projects (Bigger Projects).
@@ -88,12 +89,19 @@ def generate_strategic_projects(
             "estimatedEffort": "1–2 weeks",
             "why": "Local map pack rankings and nearby customer conversions depend heavily on verified Google Business Profile signals and citation accuracy.",
         })
+        
+        review_why = "Customer reviews and response rates on Google Maps directly influence local search prominence and client trust."
+        if competitors and getattr(competitors, "status", None) == "available" and competitors.competitors:
+            avg_reviews = sum(c.review_count for c in competitors.competitors if c.review_count) // max(1, sum(1 for c in competitors.competitors if c.review_count))
+            if avg_reviews > 10:
+                review_why = f"Top local competitors in {competitors.search_location or 'your area'} average ~{avg_reviews} Google reviews. A systematic review collection workflow strengthens local map pack prominence."
+
         projects.append({
             "id": "bp-local-reviews",
             "title": "Establish a systematic Google Review collection workflow",
             "impact": "High",
             "estimatedEffort": "1–2 weeks",
-            "why": "Customer reviews and response rates on Google Maps directly influence local search prominence and client trust.",
+            "why": review_why,
         })
 
     # 3. Technology / SaaS / AI Projects

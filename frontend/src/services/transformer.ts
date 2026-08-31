@@ -328,25 +328,7 @@ export function transformApiResponseToReport(
     },
   ];
 
-  // Competitor benchmarks
-  const compItems: CompetitorItem[] = [
-    {
-      name: `${categoryLabel} Benchmark A`,
-      rating: 4.8,
-      reviewCount: 180,
-      highlight: hasLocalPresence
-        ? 'Strong local Google Maps review presence and optimized Schema markup.'
-        : 'Comprehensive dedicated solution landing pages and optimized Schema markup.',
-    },
-    {
-      name: `${categoryLabel} Benchmark B`,
-      rating: 4.6,
-      reviewCount: 120,
-      highlight: 'Dedicated procedure/capability pages with fast mobile load speeds.',
-    },
-  ];
-
-  // Strengths & Opportunities
+  // Strengths & Opportunities (Fallback derived from technical checks)
   const strengths: string[] = [];
   const opportunities: string[] = [];
 
@@ -369,6 +351,30 @@ export function transformApiResponseToReport(
     }
   }
 
+  // Real Competitors from Google Places (Phase 7)
+  const rawCompetitors = apiResponse.competitors;
+  const compStatus = rawCompetitors?.status || 'unavailable';
+  const compItems: CompetitorItem[] = (rawCompetitors?.competitors || []).map((c) => ({
+    place_id: c.place_id,
+    name: c.name,
+    rating: c.rating,
+    reviewCount: c.review_count,
+    address: c.address,
+    distance_km: c.distance_km,
+    website_url: c.website_url,
+    category: c.category,
+    source: c.source || 'google_places',
+    highlight: c.highlight || 'Verified local competitor via Google Places.',
+  }));
+
+  const compStrengths: string[] = (rawCompetitors?.strengths && rawCompetitors.strengths.length > 0)
+    ? rawCompetitors.strengths
+    : strengths;
+
+  const compOpportunities: string[] = (rawCompetitors?.opportunities && rawCompetitors.opportunities.length > 0)
+    ? rawCompetitors.opportunities
+    : opportunities;
+
   // Bigger Projects (Context-Aware)
   const biggerProjects: ProjectItem[] = [];
   if (isAccessBlocked) {
@@ -390,12 +396,22 @@ export function transformApiResponseToReport(
       estimatedEffort: '1–2 weeks',
       why: 'Local map pack rankings and nearby customer conversions depend on complete Google Business Profile signals and citation accuracy.',
     });
+
+    let reviewWhy = 'Customer reviews on Google Maps and Local Pack are top factors for customer trust and organic discovery.';
+    if (rawCompetitors?.status === 'available' && rawCompetitors.competitors.length > 0) {
+      const revs = rawCompetitors.competitors.map((c) => c.review_count || 0).filter((r) => r > 0);
+      if (revs.length > 0) {
+        const avg = Math.round(revs.reduce((a, b) => a + b, 0) / revs.length);
+        reviewWhy = `Top local competitors average ~${avg} Google reviews. A systematic review collection workflow helps build organic prominence and customer trust.`;
+      }
+    }
+
     biggerProjects.push({
       id: 'bp-reviews',
       title: 'Establish a systematic Google Review collection workflow',
       impact: 'High',
       estimatedEffort: '1–2 weeks',
-      why: 'Customer reviews on Google Maps and Local Pack are top factors for customer trust and organic discovery.',
+      why: reviewWhy,
     });
   } else if (['technology', 'saas'].includes(category)) {
     biggerProjects.push({
@@ -479,10 +495,14 @@ export function transformApiResponseToReport(
       items: icpItems,
     },
     competitors: {
-      disclaimer: `SIMULATED BENCHMARK DATA: Real-time competitor tracking via Google Places API will be enabled in a future phase.`,
+      status: compStatus,
+      searchCategory: rawCompetitors?.search_category,
+      searchLocation: rawCompetitors?.search_location,
       items: compItems,
-      strengths,
-      opportunities,
+      strengths: compStrengths,
+      opportunities: compOpportunities,
+      reason: rawCompetitors?.reason,
+      limitations: rawCompetitors?.limitations,
     },
     biggerProjects,
   };

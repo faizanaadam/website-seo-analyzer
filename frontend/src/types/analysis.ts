@@ -55,10 +55,38 @@ export interface ICPFindingItem {
 }
 
 export interface CompetitorItem {
+  place_id?: string;
   name: string;
-  rating: number;
-  reviewCount: number;
-  highlight: string;
+  rating?: number | null;
+  reviewCount?: number | null;
+  address?: string | null;
+  distance_km?: number | null;
+  website_url?: string | null;
+  category?: string | null;
+  source?: string;
+  highlight?: string | null;
+}
+
+export interface CompetitorAnalysisData {
+  status: 'available' | 'unavailable' | 'inconclusive' | 'partial';
+  search_category?: string | null;
+  search_location?: string | null;
+  competitors: Array<{
+    place_id: string;
+    name: string;
+    rating?: number | null;
+    review_count?: number | null;
+    address?: string | null;
+    distance_km?: number | null;
+    website_url?: string | null;
+    category?: string | null;
+    source: string;
+    highlight?: string | null;
+  }>;
+  strengths: string[];
+  opportunities: string[];
+  reason?: string | null;
+  limitations: string[];
 }
 
 export interface ProjectItem {
@@ -153,6 +181,7 @@ export interface AnalysisApiResponse {
   content_analysis?: ContentAnalysisResultData | null;
   context_intelligence?: ContextIntelligenceData | null;
   pagespeed?: PageSpeedResultData | null;
+  competitors?: CompetitorAnalysisData | null;
   ai_insights?: AIAnalysisResultData | null;
   error?: string | null;
 }
@@ -190,10 +219,14 @@ export interface AnalysisReportData {
     items: ICPFindingItem[];
   };
   competitors: {
-    disclaimer: string;
+    status: 'available' | 'unavailable' | 'inconclusive' | 'partial';
+    searchCategory?: string | null;
+    searchLocation?: string | null;
     items: CompetitorItem[];
     strengths: string[];
     opportunities: string[];
+    reason?: string | null;
+    limitations?: string[];
   };
   biggerProjects: ProjectItem[];
 }

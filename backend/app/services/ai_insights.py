@@ -55,23 +55,19 @@ You MUST respond with a valid JSON object strictly matching this schema:
   "quick_wins": [
     "<Actionable quick fix supported by findings 1>",
     "<Actionable quick fix supported by findings 2>"
-  ],
-  "strengths": [
-    "<Observed positive finding supported by data 1>",
-    "<Observed positive finding supported by data 2>"
-  ],
-  "limitations": [
-    "<Notice regarding unanalyzed subpages or unavailable third-party metrics if applicable>"
-  ]
-}
-"""
+  "quickWins": ["<1-2 quick win actions that can be done in under a day>"],
+  "strengths": ["<2-3 genuine strengths confirmed in the audit data>"],
+  "limitations": ["<Any caveats or external data gaps>"]
+}"""
 
-# Topic keyword registry mapping check IDs to related phrases
-TOPIC_KEYWORDS: Dict[str, List[str]] = {
-    "ssl_https": ["ssl", "https", "tls", "security certificate", "encryption"],
-    "mobile_viewport": ["viewport", "mobile friendly", "responsive viewport", "mobile responsive"],
-    "meta_description": ["meta description", "description tag", "meta tag"],
-    "title_tag": ["title tag", "<title>", "page title", "homepage title"],
+# Keywords used to match AI recommendation topics to deterministic check IDs
+TOPIC_KEYWORDS = {
+    "title_tag": ["title tag", "meta title", "page title", "title length", "optimize title", "change title"],
+    "meta_description": ["meta description", "meta desc", "description tag", "description length", "add a meta description"],
+    "ssl_https": ["https", "ssl", "tls", "security certificate", "secure protocol"],
+    "https_ssl": ["https", "ssl", "tls", "security certificate", "secure protocol"],
+    "canonical_url": ["canonical", "rel=canonical", "canonical tag", "duplicate url"],
+    "mobile_viewport": ["viewport", "mobile responsive", "mobile viewport", "mobile readiness"],
     "h1_heading": ["h1", "heading structure", "main heading", "h1 tag", "heading tag"],
     "image_alt_tags": ["alt tag", "alt text", "alt attribute", "image accessibility", "image alt", "images missing alt"],
     "schema_org": ["schema", "structured data", "json-ld", "microdata", "rich snippet", "localbusiness"],
@@ -83,6 +79,7 @@ TOPIC_KEYWORDS: Dict[str, List[str]] = {
     "address_missing": ["address", "physical location", "street address", "google maps"],
     "pagespeed_performance": ["pagespeed", "core web vitals", "lcp", "cls", "tbt", "inp", "fcp", "page speed", "loading speed", "slow mobile"],
     "bot_protection_detected": ["bot protection", "waf", "firewall", "akamai", "cloudflare", "challenge", "403 forbidden", "crawler access", "bot access", "whitelist"],
+    "competitor_review_gap": ["review", "reviews", "google maps", "competitors", "local competition", "reputation"],
 }
 
 
@@ -97,6 +94,7 @@ class GroundingEvidenceRegistry:
         content_analysis: Optional[ContentAnalysisResultModel] = None,
         pagespeed: Optional[PageSpeedResultModel] = None,
         fetch_data: Optional[RawFetchData] = None,
+        competitors: Optional[CompetitorAnalysisModel] = None,
     ):
         self.deficiencies: Dict[str, Dict[str, Any]] = {}
         self.passed_checks: Dict[str, Dict[str, Any]] = {}
@@ -220,6 +218,23 @@ class GroundingEvidenceRegistry:
                 "suggested_action": "Ensure search engine crawlers (Googlebot, Bingbot) are whitelisted in CDN/WAF rules.",
                 "category": "technical_seo",
             }
+
+        # 5. Competitor Intelligence Evidence (from Google Places)
+        if competitors and competitors.status == "available" and competitors.competitors:
+            comp_count = len(competitors.competitors)
+            self.confirmed_strengths.append(f"Mapped {comp_count} comparable local competitors via Google Places")
+            reviews = [c.review_count for c in competitors.competitors if c.review_count is not None]
+            if reviews:
+                avg_rev = sum(reviews) // len(reviews)
+                if avg_rev >= 15:
+                    self.deficiencies["competitor_review_gap"] = {
+                        "id": "competitor_review_gap",
+                        "title": "Local Competitor Review Presence",
+                        "status": "needs_attention",
+                        "summary": f"Local competitors average ~{avg_rev} Google reviews.",
+                        "suggested_action": "Implement a proactive Google Review collection workflow to match local market prominence.",
+                        "category": "visibility",
+                    }
 
 
 def match_text_to_check_id(text: str) -> Optional[str]:
@@ -354,6 +369,7 @@ def build_compact_factual_payload(
     pagespeed: Optional[PageSpeedResultModel] = None,
     fetch_data: Optional[RawFetchData] = None,
     context_intelligence: Optional[ContextIntelligenceResultModel] = None,
+    competitors: Optional[CompetitorAnalysisModel] = None,
 ) -> Dict[str, Any]:
     """
     Constructs a compact factual dictionary strictly from deterministic findings.
@@ -370,7 +386,7 @@ def build_compact_factual_payload(
     biz_ctx = context_intelligence.business_context
     aud_ctx = context_intelligence.audience_context
     has_local_presence = (
-        biz_ctx.category in ("local_business", "healthcare", "restaurant")
+        biz_ctx.category in ("local_business", "healthcare", "restaurant", "hospitality", "professional_services")
         or bool(content_analysis and content_analysis.contact_info.address)
     )
 
@@ -433,6 +449,27 @@ def build_compact_factual_payload(
         "reason": pagespeed.reason if pagespeed else None,
     }
 
+    # Competitors stats (from Google Places)
+    competitors_stats: Dict[str, Any] = {
+        "status": competitors.status if competitors else "unavailable",
+    }
+    if competitors and competitors.status == "available" and competitors.competitors:
+        competitors_stats["count"] = len(competitors.competitors)
+        competitors_stats["search_location"] = competitors.search_location
+        competitors_stats["search_category"] = competitors.search_category
+        competitors_stats["top_competitors"] = [
+            {
+                "name": c.name,
+                "rating": c.rating,
+                "review_count": c.review_count,
+                "has_website": bool(c.website_url),
+                "address": c.address,
+            }
+            for c in competitors.competitors[:5]
+        ]
+    elif competitors:
+        competitors_stats["reason"] = competitors.reason
+
     # Diagnostics
     diagnostics = {
         "http_status": fetch_data.status_code if fetch_data else None,
@@ -473,6 +510,7 @@ def build_compact_factual_payload(
         },
         "content_analysis": content_stats,
         "pagespeed": pagespeed_stats,
+        "competitors": competitors_stats,
         "diagnostics": diagnostics,
     }
 
@@ -505,6 +543,7 @@ async def generate_ai_insights(
     pagespeed: Optional[PageSpeedResultModel] = None,
     fetch_data: Optional[RawFetchData] = None,
     context_intelligence: Optional[ContextIntelligenceResultModel] = None,
+    competitors: Optional[CompetitorAnalysisModel] = None,
     client: Optional[httpx.AsyncClient] = None,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
@@ -533,6 +572,7 @@ async def generate_ai_insights(
         content_analysis=content_analysis,
         pagespeed=pagespeed,
         fetch_data=fetch_data,
+        competitors=competitors,
     )
 
     # 3. Build compact factual payload
@@ -542,6 +582,7 @@ async def generate_ai_insights(
         pagespeed=pagespeed,
         fetch_data=fetch_data,
         context_intelligence=context_intelligence,
+        competitors=competitors,
     )
 
     effective_model = model or settings.openai_model
