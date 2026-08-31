@@ -1,20 +1,32 @@
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 /**
  * Default API Base URL.
- * - On Web (localhost or LAN IP): dynamically connects to :8000 on the same host
+ * - On Web: dynamically connects to :8000 on the same host
+ * - In Expo Go on physical device / simulator: dynamically extracts the packager host IP
  * - On Android Emulator: http://10.0.2.2:8000
- * - On iOS Simulator / Localhost: http://localhost:8000
+ * - Fallback: http://192.168.1.28:8000
  */
 const getDefaultBaseUrl = (): string => {
   if (typeof window !== 'undefined' && window.location && window.location.hostname) {
     const host = window.location.hostname;
     return `http://${host}:8000`;
   }
+  
+  // Extract packager host IP when running in Expo Go
+  const hostUri = Constants.expoConfig?.hostUri || (Constants as any).manifest2?.extra?.expoClient?.hostUri || (Constants as any).manifest?.debuggerHost;
+  if (hostUri) {
+    const ip = hostUri.split(':')[0];
+    if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
+      return `http://${ip}:8000`;
+    }
+  }
+
   if (Platform.OS === 'android') {
     return 'http://10.0.2.2:8000';
   }
-  return 'http://localhost:8000';
+  return 'http://192.168.1.28:8000';
 };
 
 export const API_CONFIG = {
